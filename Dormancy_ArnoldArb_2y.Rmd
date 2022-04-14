@@ -2777,7 +2777,7 @@ Trespk=ggplot()+
   #geom_point(data=Tdatbk,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
   #geom_errorbar(data=Tdatbk,aes(ymin=(Rate-k.error)/correction, ymax=(Rate+k.error)/correction, x=Temperature, group=Species),width=0, size=0.1)+
   geom_point(data=Tdatbk,aes(x=Temperature+0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
-  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate/CorRate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
   #geom_point(data=Tdatc,aes(x=22,y=(Rate), fill=Species),size=1,stroke=0.3, shape=21)+
   #geom_smooth(data=dat4b,aes(x=Temperature,y=Ratio, color=Species),method='lm',formula=y~x,se=F)+
   scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
@@ -2811,7 +2811,7 @@ Trespk2=ggplot()+
   #geom_point(data=Tdatbk,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
   #geom_errorbar(data=Tdatbk,aes(ymin=(Rate-k.error)/correction, ymax=(Rate+k.error)/correction, x=Temperature, group=Species),width=0, size=0.1)+
   geom_point(data=Tdatbk,aes(x=Temperature+0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
-  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate/CorRate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
   #geom_point(data=Tdatc,aes(x=22,y=(Rate), fill=Species),size=1,stroke=0.3, shape=21)+
   #geom_smooth(data=dat4b,aes(x=Temperature,y=Ratio, color=Species),method='lm',formula=y~x,se=F)+
   scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
@@ -3063,7 +3063,7 @@ psik=ggplot()+
   geom_abline(slope=0,intercept=0.99, color="#E64B35FF",lty=1)+
   geom_line(data=slp2k, aes(x=portions, y= pred, group=Species,color=Species ), size=0.8)+
   geom_point(data=slpck,aes(x=portions, y=R.slope2, group=Species,fill=Species),shape=21,stroke=0.3, size=1)+
-  ylab("Rate proportion") + xlab("Chill portions") + labs(color = "") +
+  ylab("Rate proportion") + xlab("Accumulated chill (portions)") + labs(color = "") +
   scale_y_continuous(limits=c(-0.,NA), breaks=c(0,0.25,0.5,0.75,1))+
   scale_x_continuous(limits=c(0,110), breaks=c(0,25,50,75,100))+
   #scale_color_viridis_d()+
@@ -3087,7 +3087,7 @@ psik=ggplot()+
 (psik+psik)/(psik+psik)
 
 
-(ratek+psik)/(ratek+psik)
+(ratek1+psik)/(ratek2+psik)
 
 
 
