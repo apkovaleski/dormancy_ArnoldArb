@@ -1,0 +1,4343 @@
+---
+title: "Multiple species Arboretum"
+author: "Al Kovaleski"
+date: "2/3/2020"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+```{r}
+library(patchwork)
+library(ggplot2)
+library(drc)
+library(chillR)
+library(lubridate)
+library(car)
+library(MASS)
+library(agricolae)
+library(plotly)
+
+
+lims <- as.POSIXct(strptime(c("2019-08-31 03:00","2020-06-03 16:00"), format = "%Y-%m-%d %H:%M")) 
+
+limsb <- as.POSIXct(strptime(c("2019-08-31 03:00","2020-06-15 16:00"), format = "%Y-%m-%d %H:%M")) 
+
+lims2 <- as.POSIXct(strptime(c("2020-02-15 03:00","2020-06-03 16:00"), format = "%Y-%m-%d %H:%M")) 
+
+lims3 <- as.POSIXct(strptime(c("2020-08-31 03:00","2021-06-03 16:00"), format = "%Y-%m-%d %H:%M")) 
+
+lims4 <- as.POSIXct(strptime(c("2021-02-15 03:00","2021-06-03 16:00"), format = "%Y-%m-%d %H:%M")) 
+
+k=c("Abies_balsamea","Cercis_canadensis", "Forsythia", "Larix_kaempferi")
+
+#### Loading cold hardiness dataset and arranging in useful format ####
+
+dat=read.csv("ChillCurve.csv")
+datx=read.csv("ChillCurve2.csv")
+
+
+dat2=data.frame(dat[1],stack(dat[2:ncol(dat)]))
+
+dat2$ind = substr(dat2$ind,2,9)
+
+
+dat2$Year=substr(dat2$ind,1,2)
+dat2$Month=substr(dat2$ind,3,4)
+dat2$Day=substr(dat2$ind,5,6)
+dat2$Collection=paste(substr(dat2$ind,7,8),"20",sep="")
+
+dat2$Date=paste(dat2$Year, dat2$Month, dat2$Day, sep="-")
+
+dat2$Date= as.Date(dat2$Date, format="%y-%m-%d")
+dat2$Date=as.POSIXct(dat2$Date,format= "%Y-%m-%d")+61200
+
+dat2$Collection=as.factor(dat2$Collection)
+
+colnames(dat2)=c("Species","LTE","ind","Year","Month","Day","Collection","Date")
+dat2$Species=as.factor(dat2$Species)
+dat2$LTE=-dat2$LTE
+dat2=dat2[complete.cases(dat2),]
+
+
+
+for (i in levels(dat2$Collection)) {
+  
+  dat2$Day[dat2$Collection==i]=(dat2$Date[dat2$Collection==i]-min(dat2$Date[dat2$Collection==i]))/(3600*24)
+  
+}
+
+dat2$Day=as.numeric(as.character(dat2$Day))
+
+
+dat2x=data.frame(datx[1],stack(datx[2:ncol(datx)]))
+
+dat2x$ind = substr(dat2x$ind,2,9)
+
+
+dat2x$Year=substr(dat2x$ind,1,2)
+dat2x$Month=substr(dat2x$ind,3,4)
+dat2x$Day=substr(dat2x$ind,5,6)
+dat2x$Collection=paste(substr(dat2x$ind,7,8),"21",sep="")
+
+dat2x$Date=paste(dat2x$Year, dat2x$Month, dat2x$Day, sep="-")
+
+dat2x$Date= as.Date(dat2x$Date, format="%y-%m-%d")
+dat2x$Date=as.POSIXct(dat2x$Date,format= "%Y-%m-%d")+61200
+
+dat2x$Collection=as.factor(dat2x$Collection)
+
+colnames(dat2x)=c("Species","LTE","ind","Year","Month","Day","Collection","Date")
+dat2x$Species=as.factor(dat2x$Species)
+dat2x$LTE=-dat2x$LTE
+dat2x=dat2x[complete.cases(dat2x),]
+
+
+
+for (i in levels(dat2x$Collection)) {
+  
+  dat2x$Day[dat2x$Collection==i]=(dat2x$Date[dat2x$Collection==i]-min(dat2x$Date[dat2x$Collection==i]))/(3600*24)
+  
+}
+
+dat2x$Day=as.numeric(as.character(dat2x$Day))
+
+
+dat2=rbind(dat2,dat2x)
+dat2$Y=factor(substr(dat2$Collection,3,4))
+
+
+
+#### Using linear models for each collection each species to weed out outliers ####
+
+
+lm1=lm(LTE~Day:Species:Collection+Species:Collection, data=dat2)
+
+summary(lm1)
+Anova(lm1)
+
+
+plot(dat2$LTE,lm1$fitted.values, col=dat2$Collection)
+abline(0,1)
+stud.res=studres(lm1)
+plot(lm1$fitted.values,stud.res)
+abline(0,0)
+
+
+
+
+plot(dat2$Day,stud.res)
+hist(stud.res,breaks=50)
+qqPlot(stud.res)
+
+
+#cooks.dist=cooks.distance(lm1)
+#plot(cooks.dist)
+
+
+
+not_outlier = which(abs(stud.res) <= 3) #Removing outliers with studentized residuals > 3
+
+
+lm2=lm(LTE~Day:Species:Collection+Species:Collection, data=dat2, subset=not_outlier)
+
+
+#Anova(lm2)
+#summary(lm2)
+
+dat2$not=0
+dat2$not[which(abs(stud.res) <= 3)]=1
+
+dat2a=subset(dat2, not %in% c(1))
+
+
+
+
+stud.res=studres(lm2)
+plot(lm2$fitted.values,stud.res)
+abline(0,0)
+plot(dat2a$Day,stud.res)
+hist(stud.res,breaks=50)
+
+#qqPlot(stud.res)
+#cooks.dist=cooks.distance(lm2)
+#plot(cooks.dist)
+
+
+
+
+
+
+
+
+
+
+#### Extracting rates of deacclimation for each Collection-Species ####
+
+dat5=NULL
+
+for (i in levels(dat2a$Species)) {
+  
+  dat2c=subset(dat2a, Species %in% i)
+  dat2c$Collection=factor(dat2c$Collection)
+  
+  for (j in levels(dat2c$Collection)) {
+    
+    dat2d=subset(dat2c, Collection %in% j)
+    
+    if (mean(dat2d$Day)==0) {
+      
+      dat5=rbind(dat5, c(i,j,"NA","NA","NA","NA"))
+      
+    } else {
+    
+      lm2a=lm(LTE~Day, data=dat2d)
+      summary(lm2a)$coefficients[2,]
+      
+      dat5=rbind(dat5, c(i,j,summary(lm2a)$coefficients[2,1:4]))
+    
+    
+    
+    }
+    
+  }
+
+}
+
+
+slp=data.frame(dat5)
+
+colnames(slp)=c("Species","Collection","Rate","k.error","t.value","Significance")
+slp$Rate=as.numeric(as.character(slp$Rate))
+slp$k.error=as.numeric(as.character(slp$k.error))
+slp$t.value=as.numeric(as.character(slp$t.value))
+slp$Significance=as.numeric(as.character(slp$Significance))
+slp$Collection=as.factor(slp$Collection)
+slp$Species=as.factor(slp$Species)
+
+
+slp=slp[complete.cases(slp),]
+
+
+
+
+#### Subset of data with only field cold hardiness ####
+
+
+dat3=NULL
+
+for (i in levels(dat2a$Collection)) {
+  r=subset(subset(dat2a, Collection %in% i),Y %in% "20")
+  s=subset(r, Date %in% min(Date))
+  dat3=rbind(dat3,s)
+}
+
+dat3x=NULL
+
+for (i in levels(dat2a$Collection)) {
+  r=subset(subset(dat2a, Collection %in% i),Y %in% "21")
+  s=subset(r, Date %in% min(Date))
+  dat3x=rbind(dat3x,s)
+}
+
+
+#### Creating table with collections and chill accumulation ####
+
+#setdate=read.csv("ColDates.csv")
+
+setdate=data.frame(Collection=factor(levels(dat2$Collection)))
+
+for (i in levels(setdate$Collection)) {
+  
+  setdate$ColDate[setdate$Collection==i]=(as.character(min(dat2$Date[dat2$Collection==i])) ) 
+
+  
+}
+
+setdate$ColDate=as.POSIXct(setdate$ColDate, format = "%Y-%m-%d %H:%M:%S") 
+
+
+datw=read.csv("weather2019_2020.csv")
+datwx=read.csv("weather2020_2021.csv")
+
+datw$Temperature=(datw$Temperature-32)/1.8
+datw$Date=as.POSIXct(datw$Date,format= "%m/%d/%y %H:%M")
+
+datw$portions=Dynamic_Model(datw$Temperature)
+
+datwx$Temperature=(datwx$Temperature-32)/1.8
+datwx$Date=as.POSIXct(datwx$Date,format= "%m/%d/%y %H:%M")
+
+datwx$portions=Dynamic_Model(datwx$Temperature)
+
+datww=rbind(datw,datwx)
+
+for (i in 1:nrow(setdate)) {
+  
+  setdate$portions[i]=datww$portions[datww$Date==setdate$ColDate[i]]
+  
+  
+}
+
+
+
+
+#### Looking at budbreak in the growth chamber at 22*C ####
+
+
+fdat=read.csv("Budbreak.csv")
+fdatx=read.csv("Budbreak2.csv")
+
+
+for (i in c(2:ncol(fdat))) {
+  
+  fdat[,i]=(as.character(fdat[,i]))
+  
+}
+
+
+fdat=data.frame(fdat[1],stack(fdat[2:ncol(fdat)]))
+
+colnames(fdat)=c("Species","BBdate","Collection")
+
+for (i in c(2:ncol(fdatx))) {
+  
+  fdatx[,i]=(as.character(fdatx[,i]))
+  
+}
+
+
+fdatx=data.frame(fdatx[1],stack(fdatx[2:ncol(fdatx)]))
+
+colnames(fdatx)=c("Species","BBdate","Collection")
+
+fdat$Collection=paste(fdat$Collection,"20",sep="")
+fdatx$Collection=paste(fdatx$Collection,"21",sep="")
+
+fdat=rbind(fdat,fdatx)
+
+
+fdat=merge(fdat,setdate, keepall=T)
+
+fdat$BBdate=as.Date(fdat$BBdate, format="%m/%d/%y")
+fdat$BBdate=as.POSIXct(fdat$BBdate,format= "%Y-%m-%d")
+
+fdat$ColDate=as.Date(fdat$ColDate, format="%m/%d/%y")
+fdat$ColDate=as.POSIXct(fdat$ColDate,format= "%Y-%m-%d")
+
+
+fdat$BBtime=as.numeric(fdat$BBdate-fdat$ColDate)/86400
+fdat$Species=as.factor(fdat$Species)
+
+fdat$Y=as.factor(substr(fdat$Collection,3,4))
+
+ggplot()+
+  geom_point(data=fdat,aes(x=portions,y=BBtime, col=Y))+
+  scale_y_continuous(limits = c(0,NA))+
+  facet_wrap(~Species)
+
+
+
+#fdatb=subset(fdat, Species %in% c(k))
+
+fdatb=fdat
+
+fdatbmean=aggregate(BBtime~Species+Collection+portions,fdatb,mean)
+
+
+
+fdatbmean$BBtimex=(fdatbmean$BBtime-15)
+fdatbmean$BBtimexsum=200
+
+fdatbmeanc=NULL
+
+
+for (i in levels(factor(fdatbmean$Species))) {
+  
+  fdatbmeanb=subset(fdatbmean, Species %in% i)
+  rownames(fdatbmeanb)=NULL
+  
+  for (j in 4:nrow(fdatbmeanb)) {
+    
+    fdatbmeanb$BBtimexsum[j]=sum(fdatbmeanb$BBtimex[(j-3):j])
+    
+  }
+  
+  fdatbmeanc=rbind(fdatbmeanc,fdatbmeanb)
+  
+}
+
+
+
+
+fdatbmean1=NULL
+
+for (i in levels(factor(fdatbmean$Species))) {
+  
+  fdatbmeanb=subset(fdatbmeanc, Species %in% i)
+  rownames(fdatbmeanb)=NULL
+  j=which(abs(fdatbmeanb$BBtimexsum)==min(abs(fdatbmeanb$BBtimexsum)))
+  
+  if (min(abs(fdatbmeanb$BBtimexsum))>30) {j=nrow(fdatbmeanb)}
+  
+  
+  fdatbmean2=fdatbmeanb[(j-3):j,]
+  fdatbmean1=rbind(fdatbmean1,fdatbmean2)
+  
+}
+
+fdatbmean3=data.frame(fdatbmean1)
+
+
+#### Comparing chilling requirement based on 4 dates with budbreak closest to 15d ####
+
+lmbb=lm(data=fdatbmean3,portions~Species) 
+summary(lmbb)
+
+
+fdatbmean4=aggregate(portions~Species,fdatbmean3,mean)
+
+fdatbmean4=cbind(fdatbmean4,aggregate(portions~Species,fdatbmean3,sd)[2] )
+colnames(fdatbmean4)=c("Species","portions","ReqBB.error")
+
+d=(LSD.test(lmbb,"Species",p.adj="bonferroni"))$groups
+d$Species=as.factor(rownames(d))
+
+
+fdatbmean4=merge(fdatbmean4,d[,2:3], by="Species")
+
+
+#### Using deacclimation rates to look at chilling requirements ####
+
+
+slpc=merge(slp,setdate, by="Collection")
+slpc$Species=as.factor(slpc$Species)
+slpc$Collection=as.factor(slpc$Collection)
+
+slpc$Date=as.Date(slpc$ColDate, format="%m/%d/%y")
+
+
+
+
+
+slpc$max=0
+
+for (i in levels(factor(slpc$Species))) {
+  
+  slpc$max[slpc$Species==i]= mean(sort(slpc$Rate[slpc$Species==i], decreasing=T)[1:4])
+  
+  
+}
+
+
+
+
+slpc$R.slope2=NA
+
+slpc$R.slope2=slpc$Rate/slpc$max
+
+
+
+
+
+#slpc$DOY=julian.Date(slpc$Date, origin=as.Date("2019-09-01"))
+
+slpc$Rate2=0
+slpc$Rate2[slpc$Significance<0.1]=slpc$Rate[slpc$Significance<0.1]
+
+slpc$R.slope2[slpc$R.slope2<0]=0   #Rates below 0 mean acclimation, which we're not interested in in terms of deacclimation potential
+
+slpd=slpc
+
+
+mod1=drm(slpd$R.slope2~slpd$portions, curveid=slpd$Species, fct = LL.3u(), type = "continuous")
+
+summary(mod1)
+
+slpd$pred=predict(mod1)
+
+slpd$outlier=1
+slpd$outlier[abs(slpd$pred-slpd$R.slope2)>0.3 ]=0
+
+mod1b=lm(slpd$R.slope2~poly(slpd$portions,2)*slpd$Species)
+
+
+library(AICcmodavg)
+
+models <- list(mod1, mod1b)
+
+#specify model names
+mod.names <- c('disp.hp.wt.qsec', 'disp.qsec')
+
+#calculate AIC of each model
+aictab(cand.set = models, modnames = mod.names)
+
+AICc(mod1b, return.K = T)
+
+aictest=NULL
+
+for (i in levels(slpd$Species)) {
+  
+  slpdsub=subset(slpd,Species %in% i)
+  
+  mod1sub=drm(slpdsub$R.slope2~slpdsub$portions, fct = LL.3u(), type = "continuous")
+  
+  mod1asub=lm(slpdsub$R.slope2~slpdsub$portions)
+  
+  mod1bsub=lm(slpdsub$R.slope2~poly(slpdsub$portions,2))
+  
+  mod1csub=lm(slpdsub$R.slope2~poly(slpdsub$portions,3))
+  
+  
+  aictest=rbind(aictest, c(i, AIC(mod1sub,k=2),AIC(mod1asub,k=2),AIC(mod1bsub,k=2),AIC(mod1csub,k=2)))
+  
+  
+  
+}
+
+
+aictest=data.frame(aictest)
+
+AIC(mod1,k=2)
+AIC(mod1b,k=2)
+
+
+ChillComp=data.frame(compParm(mod1, "e", operator="-",  pool=T))
+ChillComp$Species=as.factor(rownames(ChillComp))
+ChillComp$Bonf.p=ChillComp$p.value*105
+ChillComp$Diff=0
+ChillComp$Diff[ChillComp$Bonf.p<0.05]=1
+
+#EDcomp(mod1,c(80,80),type="relative", vcov.=sandwich, multcomp=T, plotit=T)
+#EDcomp(mod1,c(50,50),type="relative", vcov.=sandwich, multcomp=T, plotit=T) 
+#EDcomp(mod1,c(20,20),type="relative", vcov.=sandwich, multcomp=T, plotit=T)
+
+l=data.frame(ED(mod1,50))
+l$Species=levels(factor(slpd$Species))
+
+
+
+
+
+
+
+n=nlevels(factor(slpd$Species))
+
+dft=data.frame(mod1$coefficients[1:n])
+dft$Species=rownames(dft)
+dft$Species=as.factor(substr(dft$Species,3,20))
+
+slpcoef=data.frame(dft$Species,mod1$coefficients[1:n],mod1$coefficients[(n+1):(2*n)],
+                   mod1$coefficients[(2*n+1):(3*n)],summary(mod1)$coefficients[(2*n+1):(3*n),2])
+colnames(slpcoef)=c("Species","b","intcept", "c","c.error")
+rownames(slpcoef)=NULL
+
+
+mod2=drm(slpc$R.slope2~slpc$portions, fct = LL.3u(), type = "continuous")
+summary(mod2)
+
+
+slpc$pred2=predict(mod2)
+
+plot(slpc$portions,slpc$pred2-slpc$R.slope2)
+abline(0,0)
+
+slp2=data.frame(portions=seq(0,150,1))
+slp2=merge(slp2,levels(factor(slpd$Species)))
+colnames(slp2)=c("portions","Species")
+
+slp2$pred=0
+
+for (i in levels(factor(slp2$Species))) {
+  
+  
+  slp2$pred[slp2$Species==i]=slpcoef$intcept[slpcoef$Species==i]+ (1-slpcoef$intcept[slpcoef$Species==i])/(1+exp(slpcoef$b[slpcoef$Species==i]*(log(slp2$portions[slp2$Species==i])-log(slpcoef$c[slpcoef$Species==i]))))
+  
+}
+
+
+
+
+
+slp2$pred2=mod2$coefficients[2]+(1-mod2$coefficients[2])/(1+exp(mod2$coefficients[1]*(log(slp2$portions)-log(mod2$coefficients[3]))))
+
+
+
+
+
+slpb=slp2
+
+
+
+
+#fdat2=merge(fdat2,slpb, by="Collection", keepall=F)
+
+
+
+
+
+#### Modeling field budbreak based on day of the year ####
+
+fbb=read.csv("fieldbb.csv")
+fbb=data.frame(fbb[1],stack(fbb[2:ncol(fbb)]))
+colnames(fbb)=c("Species","BB","Date")
+
+
+fbb$Date=as.Date(fbb$Date, format="X%m.%d.%y")
+fbb$Date=as.POSIXct(fbb$Date,format= "%Y-%m-%d")+16*60*60
+
+
+#fbb=subset(fbb, Species %in% k)
+
+fbb$DOY=as.numeric(julian(fbb$Date,origin=as.Date("2020-01-01")))
+
+fbb=fbb[complete.cases(fbb),]
+
+modfbb=drm(BB/100~DOY, curveid=Species, data=fbb, fct = LL.2(), type = "continuous")
+
+summary(modfbb)
+
+
+
+meanfbb=data.frame(modfbb$coefficients[(nlevels(factor(fbb$Species))+1):(nlevels(factor(fbb$Species))*2)],
+                   modfbb$coefficients[1:(nlevels(factor(fbb$Species)))])
+meanfbb$Species=rownames(meanfbb)
+meanfbb$Species=factor(substr(meanfbb$Species,3,20))
+colnames(meanfbb)=c("FieldBB","Slopefbb","Species")
+rownames(meanfbb)=NULL
+meanfbb$Slopefbb[meanfbb$Slopefbb<(-150)]=-150
+
+
+
+fbb$BBTime=predict(modfbb)
+
+
+fbb2=data.frame(DOY=seq(50,170,0.1))
+
+
+
+fbb2=merge(meanfbb,fbb2)
+
+fbb2$pdf=(((exp(fbb2$Slopefbb * (log(fbb2$DOY) - log(fbb2$FieldBB))))* ((-fbb2$Slopefbb) * (1/fbb2$DOY)))/((1+exp(fbb2$Slopefbb * (log(fbb2$DOY) - log(fbb2$FieldBB))))^2))
+
+fbb2$Date=as.POSIXct("2020-01-01 20:00:00")+fbb2$DOY*24*60*60
+
+fbbx=data.frame(fbb2$DOY, fbb2$Date, fbb2$Species, fbb2$FieldBB, fbb2$Slopefbb)
+fbbx$pdf=0
+colnames(fbbx)=c("DOY","Date","Species","FieldBB","Slopefbb","pdf")
+
+fbb2=rbind(fbb2,fbbx)
+
+
+
+#### Calculating Max Field Cold Hardiness (observed) ####
+
+maxCH=aggregate(LTE~Species+Date+Collection,dat3,mean)
+
+maxCH$ismax=0
+
+
+
+for (i in levels(factor(maxCH$Species))) {
+  
+  
+  maxCH$ismax[maxCH$Species==i & maxCH$LTE==sort(maxCH$LTE[maxCH$Species==i],decreasing=F)[1]]= 1
+  maxCH$ismax[maxCH$Species==i & maxCH$LTE==sort(maxCH$LTE[maxCH$Species==i],decreasing=F)[2]]= 1
+  maxCH$ismax[maxCH$Species==i & maxCH$LTE==sort(maxCH$LTE[maxCH$Species==i],decreasing=F)[3]]= 1
+  maxCH$ismax[maxCH$Species==i & maxCH$LTE==sort(maxCH$LTE[maxCH$Species==i],decreasing=F)[4]]= 1
+  
+}
+
+maxCH=subset(maxCH, ismax == 1)
+
+maxCH2=merge(maxCH[1:3],dat3)
+
+
+plot(factor(maxCH2$Species),maxCH2$LTE)
+
+
+maxCHx=aggregate(LTE~Species+Date+Collection,dat3x,mean)
+
+maxCHx$ismax=0
+
+
+
+for (i in levels(factor(maxCHx$Species))) {
+  
+  
+  maxCHx$ismax[maxCHx$Species==i & maxCHx$LTE==sort(maxCHx$LTE[maxCHx$Species==i],decreasing=F)[1]]= 1
+  maxCHx$ismax[maxCHx$Species==i & maxCHx$LTE==sort(maxCHx$LTE[maxCHx$Species==i],decreasing=F)[2]]= 1
+  maxCHx$ismax[maxCHx$Species==i & maxCHx$LTE==sort(maxCHx$LTE[maxCHx$Species==i],decreasing=F)[3]]= 1
+  maxCHx$ismax[maxCHx$Species==i & maxCHx$LTE==sort(maxCHx$LTE[maxCHx$Species==i],decreasing=F)[4]]= 1
+  
+}
+
+maxCHx=subset(maxCHx, ismax == 1)
+
+maxCH2x=merge(maxCHx[1:3],dat3x)
+
+
+plot(factor(maxCH2x$Species),maxCH2x$LTE)
+
+maxCH3=rbind(maxCH2,maxCH2x)
+
+
+
+#### Calculating Max Deacc Rate ####
+
+
+maxRate=aggregate(Rate~Species+Collection,slp,mean)
+
+maxRate$ismax=0
+
+
+
+for (i in levels(factor(maxRate$Species))) {
+  
+  
+  maxRate$ismax[maxRate$Species==i & maxRate$Rate==sort(maxRate$Rate[maxRate$Species==i],decreasing=T)[1]]= 1
+  maxRate$ismax[maxRate$Species==i & maxRate$Rate==sort(maxRate$Rate[maxRate$Species==i],decreasing=T)[2]]= 1
+  maxRate$ismax[maxRate$Species==i & maxRate$Rate==sort(maxRate$Rate[maxRate$Species==i],decreasing=T)[3]]= 1
+  maxRate$ismax[maxRate$Species==i & maxRate$Rate==sort(maxRate$Rate[maxRate$Species==i],decreasing=T)[4]]= 1
+  
+}
+
+maxRate=subset(maxRate, ismax == 1)
+
+
+
+maxBothA=aggregate(LTE~Species,maxCH3,mean)
+
+maxBothB=aggregate(Rate~Species,maxRate,mean)
+
+maxBoth=merge(maxBothA, maxBothB, by="Species")
+
+maxBoth$Time=(-maxBoth$LTE)/maxBoth$Rate
+
+
+
+
+#### Finding q value ####
+
+Ratepart=aggregate(Rate~Species+Collection,slp,mean)
+
+datm3=merge(fdat, dat3)
+datm3=merge(Ratepart,datm3)
+
+datm3=subset(subset(datm3, portions>25), Rate<20)
+datm3$q=(datm3$LTE)+datm3$BBtime*datm3$Rate
+
+datm3$q[datm3$Species=="Rhododendron"]=-5
+
+
+
+
+
+
+avq=aggregate(q~Species,datm3,mean)
+
+avq$q=as.numeric(avq$q)
+
+
+avRate=aggregate(Rate~Species,maxRate,mean)
+
+avCH=aggregate(LTE~Species, maxCH2, mean)
+
+avAll=merge(avq, avRate)
+avAll=merge(avAll,avCH)
+
+avAll$Time=(-avAll$LTE+avAll$q)/(avAll$Rate)
+
+avAll=merge(avAll,meanfbb)
+
+
+cor(avAll$Time,avAll$FieldBB)
+
+cor(avAll$Rate,avAll$FieldBB)
+
+cor(avAll$LTE,avAll$FieldBB)
+
+cor(avAll$q,avAll$FieldBB)
+
+
+
+#### Adding Temperature Response Data ####
+
+Correction=data.frame(Species=maxBoth$Species,maxRate=maxBoth$Rate,Temperature=22)
+
+
+
+dattemp=read.csv("Temp.csv")
+
+
+dattemp2=data.frame(dattemp[1:2],stack(dattemp[3:ncol(dattemp)]))
+
+dattemp2$ind = gsub('X', '', dattemp2$ind)
+
+colnames(dattemp2)=c("Species","Temperature","LTE","Date")
+
+
+dattemp2$Date= as.Date(dattemp2$Date, format="%m.%d.%y")
+dattemp2$Date=as.POSIXct(dattemp2$Date,format= "%Y-%m-%d")
+dattemp2$Date=dattemp2$Date+18000
+
+dattemp2$LTE=-dattemp2$LTE
+dattemp2=dattemp2[complete.cases(dattemp2),]
+
+dattemp2$Day=0
+
+dattemp2$Day=as.numeric(dattemp2$Date-min(dattemp2$Date))/(3600*24)
+dattemp2$Species=as.factor(dattemp2$Species)
+
+
+
+levels(dattemp2$Species)
+
+
+
+
+
+dattemp3=NULL
+
+for (i in levels(dattemp2$Species)) {
+  
+  dattemp2btemp=subset(dattemp2, Species %in% i)
+  
+  for (j in levels(factor(dattemp2btemp$Temperature))) {
+    
+    dattemp2b=subset(subset(dattemp2, Species %in% i), Temperature %in% j)
+    lm1a=lm(LTE~Day, data=dattemp2b)
+    summary(lm1a)$coefficients[2,]
+      
+    dattemp3=rbind(dattemp3, c(i,j,summary(lm1a)$coefficients[2,1:4]))
+    
+    
+  }
+}
+
+
+dattemp3=data.frame(dattemp3)
+colnames(dattemp3)=c("Species","Temperature","Rate","k.error","t.value","Significance")
+
+dattemp3$Temperature=as.numeric(as.character(dattemp3$Temperature))
+dattemp3$Rate=as.numeric(as.character(dattemp3$Rate))
+dattemp3$k.error=as.numeric(as.character(dattemp3$k.error))
+dattemp3$Species=as.factor(dattemp3$Species)
+
+Correction1=merge(Correction,dattemp3)
+Correction1$percent=Correction1$Rate/Correction1$maxRate
+
+Correction1=Correction1[c(1,8)]
+
+
+dattemp3=merge(dattemp3,Correction1)
+
+
+
+dattempx=read.csv("Temp2.csv")
+
+
+dattemp2x=data.frame(dattempx[1],stack(dattempx[2:ncol(dattempx)]))
+
+dattemp2x$Year=substr(dattemp2x$ind,2,3)
+
+dattemp2x$Month=substr(dattemp2x$ind,4,5)
+dattemp2x$Day=substr(dattemp2x$ind,6,7)
+
+dattemp2x$Temperature=substr(dattemp2x$ind,10,11)
+
+dattemp2x$Date=paste(dattemp2x$Year, dattemp2x$Month, dattemp2x$Day, sep="-")
+
+dattemp2x$Date= as.Date(dattemp2x$Date, format="%y-%m-%d")
+dattemp2x$Date=as.POSIXct(dattemp2x$Date,format= "%Y-%m-%d")+61200
+
+colnames(dattemp2x)=c("Species","LTE","ind","Year","Month","Day","Temperature","Date")
+dattemp2x$Species=as.factor(dattemp2x$Species)
+
+dattemp2x$LTE=-dattemp2x$LTE
+dattemp2x=dattemp2x[complete.cases(dattemp2x),]
+
+dattemp2x$Day=0
+
+dattemp2x$Day=as.numeric(dattemp2x$Date-min(dattemp2x$Date))/(3600*24)
+
+
+
+
+
+dattemp3x=NULL
+
+for (i in levels(dattemp2x$Species)) {
+  
+  dattemp2xtemp=subset(dattemp2x, Species %in% i)
+  
+  for (j in levels(as.factor(dattemp2xtemp$Temperature))) {
+    
+    dattemp2bx=subset(subset(dattemp2x, Species %in% i), Temperature %in% j)
+    lm1a=lm(LTE~Day, data=dattemp2bx)
+    summary(lm1a)$coefficients[2,]
+      
+    dattemp3x=rbind(dattemp3x, c(i,j,summary(lm1a)$coefficients[2,1:4]))
+    
+    
+  }
+}
+
+
+dattemp3x=data.frame(dattemp3x)
+colnames(dattemp3x)=c("Species","Temperature","Rate","k.error","t.value","Significance")
+
+dattemp3x$Temperature=as.numeric(as.character(dattemp3x$Temperature))
+dattemp3x$Rate=as.numeric(as.character(dattemp3x$Rate))
+dattemp3x$k.error=as.numeric(as.character(dattemp3x$k.error))
+dattemp3x$Species=as.factor(dattemp3x$Species)
+
+Correction=subset(dattemp3, Temperature %in% 22)
+Correction=Correction[c(1,3)]
+colnames(Correction)=c("Species","Rate20")
+
+
+Correctionx=subset(dattemp3x, Temperature %in% 22)
+Correctionx=Correctionx[c(1,3)]
+
+Correctionx=merge(Correctionx,Correction,all=T)
+Correctionx$Rate20[is.na(Correctionx$Rate20)==T]=Correctionx$Rate[is.na(Correctionx$Rate20)==T]
+
+Correctionx$CorRate=Correctionx$Rate/Correctionx$Rate20
+Correctionx=Correctionx[c(1,4)]
+
+
+dattemp3x=merge(dattemp3x,Correctionx)
+
+dattemp3graph=dattemp3x
+
+dattemp3x=subset(dattemp3x, Significance>0.01)
+
+
+
+dattemp3x$Rate=dattemp3x$Rate/dattemp3x$CorRate
+
+dattemp3x=dattemp3x[1:7]
+
+
+
+dattemp3i=rbind(dattemp3[1:3],dattemp3x[1:3])
+
+dattemp3i$Rate[dattemp3i$Rate<0]=NA
+dattemp3i=dattemp3i[complete.cases(dattemp3i),]
+
+rownames(dattemp3i)=NULL
+
+dattemp3i=dattemp3i[c(1:52,54:104,106:nrow(dattemp3i)),]  # This removes two clear outliers in the temperature response from P. armeniaca
+
+ggplot()+
+  geom_point(data=dattemp3i,aes(x=Temperature,y=Rate))+
+  geom_line(data=dattemp3i,aes(x=Temperature,y=predicted))+
+  scale_y_continuous(limits=c(0,10))+
+  facet_wrap(~Species)
+
+
+
+lm6=lm(data=dattemp3i, Rate~0+poly(Temperature, 3, raw=T):Species)
+
+summary(lm6)
+dattemp3i$predicted=predict(lm6)
+
+#dat3b=subset(dat3, Species %in% k)
+#dat4b=subset(dat4, Species %in% k)
+
+
+
+aictesttemp=NULL
+
+for (i in levels(dattemp3i$Species)) {
+  
+  dattemp3sub=subset(dattemp3i,Species %in% i)
+  
+  modtemp1asub=lm(dattemp3sub$Rate~dattemp3sub$Temperature)
+  
+  if (nrow(dattemp3sub)>3) {
+  
+  modtemp1bsub=lm(dattemp3sub$Rate~poly(dattemp3sub$Temperature,2))
+  
+  second=AIC(modtemp1bsub,k=2)
+  
+  } else {
+    
+    second=9999
+    
+  }
+  
+  if (nrow(dattemp3sub)>3) {
+  
+  modtemp1csub=lm(dattemp3sub$Rate~poly(dattemp3sub$Temperature,3))
+  
+  third=AIC(modtemp1csub,k=2)
+  
+  } else {
+    
+    third=9999
+    
+  }
+  
+  aictesttemp=rbind(aictesttemp, c(i, AIC(modtemp1asub,k=2),second,third))
+  
+  
+  
+}
+
+
+aictesttemp=data.frame(aictesttemp)
+
+
+
+dattemp2$Y="20"
+dattemp2x$Y="21"
+dattempn=rbind(dattemp2[c(1,2,3,5,6)],dattemp2x[c(1,2,6,7,9)])
+
+lm4=lm(LTE~Temperature:Species:Y+Day:Temperature:Species:Y, data=dattempn)
+
+
+lm5=lm(Rate~Species+Temperature:Species, data=dattemp3i)
+summary(lm5)
+
+
+
+
+
+
+#dattemp2c=subset(dattemp2, Species %in% k)
+
+
+
+dattemp4=NULL
+
+for (i in levels(dattemp3i$Species)) {
+  
+  dattemp3b=subset(dattemp3i, Species %in% i)
+  
+  dattemp3b$Temp2=dattemp3b$Temperature^2
+  dattemp3b$Temp3=dattemp3b$Temperature^3
+  
+  
+  lm7=lm(Rate~0+Temperature+Temp2+Temp3, data=dattemp3b)
+  
+  lm8=lm(Rate~Temperature, data=dattemp3b)
+  
+  
+  lm9=drm(Rate~Temperature, data=dattemp3b, fct=LL.3(), upperl = c(NA,(max(dattemp3b$Rate)+1),NA))
+  
+  
+  dattemp4=rbind(dattemp4,c(i,summary(lm7)$coefficients[,1],summary(lm8)$coefficients[,1],
+                            lm9$fit$par[1], lm9$fit$par[2], lm9$fit$par[3]))
+  
+  
+  
+  
+}
+
+dattemp4=data.frame(dattemp4)
+colnames(dattemp4)=c("Species","T1","T2","T3","IntL","T1L","Tb","Td","Tc")
+dattemp4$Int=as.numeric(0)
+dattemp4$T1=as.numeric(as.character(dattemp4$T1))
+dattemp4$T2=as.numeric(as.character(dattemp4$T2))
+dattemp4$T3=as.numeric(as.character(dattemp4$T3))
+dattemp4$IntL=as.numeric(as.character(dattemp4$IntL))
+dattemp4$T1L=as.numeric(as.character(dattemp4$T1L))
+dattemp4$Species=as.factor(dattemp4$Species)
+dattemp4$Tb=as.numeric(as.character(dattemp4$Tb))
+dattemp4$Td=as.numeric(as.character(dattemp4$Td))
+dattemp4$Tc=as.numeric(as.character(dattemp4$Tc))
+
+
+
+
+dattemp5=merge(dattemp4,slpcoef, all=T)
+
+
+
+
+lets=merge(avAll, dattemp5, all=T)
+lets$Int[is.na(lets$Int)==T]=0
+lets$T1[is.na(lets$T1)==T]=lets$Rate[is.na(lets$T1)==T]/22
+lets$T2[is.na(lets$T2)==T]=0
+lets$T3[is.na(lets$T3)==T]=0
+lets$IntL[is.na(lets$IntL)==T]=0
+lets$T1L[is.na(lets$T1L)==T]=lets$Rate[is.na(lets$T1L)==T]/22
+
+
+lets$Td[is.na(lets$Td)==T]=lets$Rate[is.na(lets$Td)==T]
+lets$Tb[is.na(lets$Tb)==T]=-3
+lets$Tc[is.na(lets$Tc)==T]=15
+
+
+lets$Rate22=lets$Int+(lets$T1*22+lets$T2*(22^2)+lets$T3*(22^3))
+
+letsgraph=lets
+
+
+
+lets=merge(datw, lets)
+
+
+
+
+
+
+lets$deacc=(lets$Int+lets$T1*lets$Temperature+lets$T2*(lets$Temperature^2)+lets$T3*(lets$Temperature^3))/(lets$Rate22/lets$Rate)
+
+
+lets$deacc[lets$Temperature<0]=0.3*lets$Temperature[lets$Temperature<0]
+
+
+lets$deaccL=lets$IntL+lets$T1L*lets$Temperature
+
+lets$deaccL[lets$Temperature<0]=0.3*lets$Temperature[lets$Temperature<0]
+
+
+lets$deaccS=lets$Td/(1+exp(lets$Tb*(log(lets$Temperature)-log(lets$Tc))))
+lets$deaccS[lets$Temperature<0]=0.3*lets$Temperature[lets$Temperature<0]
+
+
+lets$psi=lets$intcept+(1-lets$intcept)/(1+exp(lets$b*(log(lets$portions)-log(lets$c))))
+lets$psi[lets$Temperature<0]=1
+
+
+
+lets$sumdeacc=0
+lets$sumdeaccL=0
+lets$sumdeaccS=0
+
+letsc=NULL
+
+for (i in levels(lets$Species)) {
+  
+  letsb=subset(lets, Species %in% i)
+  
+  rownames(letsb)=NULL
+  
+  for (j in 2:nrow(letsb)) {
+    
+    letsb$sumdeacc[j]=letsb$sumdeacc[j-1]+(letsb$deacc[j]*letsb$psi[j])/24
+    letsb$sumdeacc[j & letsb$sumdeacc[j]<0]=0
+    
+    
+    letsb$sumdeaccL[j]=letsb$sumdeaccL[j-1]+(letsb$deaccL[j]*letsb$psi[j])/24
+    letsb$sumdeaccL[j & letsb$sumdeaccL[j]<0]=0
+    
+    letsb$sumdeaccS[j]=letsb$sumdeaccS[j-1]+(letsb$deaccS[j]*letsb$psi[j])/24
+    letsb$sumdeaccS[j & letsb$sumdeaccS[j]<0]=0
+    
+    
+  }
+  
+  letsc=rbind(letsc,letsb)
+  
+}
+
+
+
+letsc$sumdeacc=letsc$sumdeacc+letsc$LTE
+letsc$sumdeaccL=letsc$sumdeaccL+letsc$LTE
+letsc$sumdeaccS=letsc$sumdeaccS+letsc$LTE
+
+
+letsc$sumdeacc[letsc$sumdeacc>5]=NA
+letsc$sumdeaccL[letsc$sumdeaccL>5]=NA
+letsc$sumdeaccS[letsc$sumdeaccS>5]=NA
+
+
+letsd=NULL
+
+for (i in levels(letsc$Species)) {
+  
+  letsb=subset(letsc, Species %in% i)
+  
+  df=letsb$Date[which.min(abs(letsb$sumdeacc-letsb$q))]
+  dfL=letsb$Date[which.min(abs(letsb$sumdeaccL-letsb$q))]
+  dfS=letsb$Date[which.min(abs(letsb$sumdeaccS-letsb$q))]
+  
+  dflow=letsb$Date[which.min(abs(letsb$sumdeacc-letsb$q+2.5))]
+  dfhigh=letsb$Date[which.min(abs(letsb$sumdeacc-letsb$q-2.5))]
+  
+  dflow=as.numeric(julian(dflow,origin=as.Date("2020-01-01")))
+  dfhigh=as.numeric(julian(dfhigh,origin=as.Date("2020-01-01")))
+  
+  print(i)
+  print(as.numeric(julian(df,origin=as.Date("2020-01-01"))))
+  print(mean(letsb$FieldBB))
+  
+  letsd=rbind(letsd, c(i,"Cubic",as.numeric(julian(df,origin=as.Date("2020-01-01"))),dflow,dfhigh,mean(letsb$FieldBB)))
+  letsd=rbind(letsd, c(i,"Linear",as.numeric(julian(dfL,origin=as.Date("2020-01-01"))),0,0,mean(letsb$FieldBB)))
+  letsd=rbind(letsd, c(i,"Sigmoid",as.numeric(julian(dfS,origin=as.Date("2020-01-01"))),0,0,mean(letsb$FieldBB)))
+  
+}
+
+letsd=data.frame(letsd)
+colnames(letsd)=c("Species","T.response","predictedBB","lowinterval","highinterval","FieldBB")
+
+letsd$predictedBB=as.numeric(as.character(letsd$predictedBB))
+letsd$FieldBB=as.numeric(as.character(letsd$FieldBB))
+letsd$lowinterval=as.numeric(as.character(letsd$lowinterval))
+letsd$highinterval=as.numeric(as.character(letsd$highinterval))
+
+
+
+cor(letsd$FieldBB,letsd$predictedBB)
+
+
+letse=subset(letsd, T.response %in% "Cubic")
+
+letse$fbbhigh=ED(modfbb,95)[,1]
+letse$fbblow=ED(modfbb,5)[,1]
+
+letse$lowintervaldate=as.POSIXct(as.Date(letse$lowinterval, origin = as.Date("2020-01-01")))
+letse$highintervaldate=as.POSIXct(as.Date(letse$highinterval, origin = as.Date("2020-01-01")))
+
+
+cor(letse$FieldBB,letse$predictedBB)
+
+lmfinal=lm(letse$predictedBB~letse$FieldBB)
+
+summary(lmfinal)
+
+sqrt(mean(lmfinal$residuals^2))
+
+#### Looking at predicted cold hardiness from January to budbreak ####
+
+
+letscb=letsc[c(1,4,29)]
+
+summary(dat3)
+
+dat3b=aggregate(LTE~Species+Date+Year+Collection,dat3,mean)
+
+dat3b=merge(dat3b,letscb)
+
+dat3b=subset(dat3b, Year %in% "20")
+
+dat3bb=subset(dat3b, Species != "Kalmia")
+
+
+summary(lm(dat3b$LTE~dat3b$sumdeacc))
+
+summary(lm(dat3bb$LTE~dat3bb$sumdeacc))
+
+
+ggplot()+
+  geom_point(aes(x=LTE, y=sumdeacc, col=Species),shape=21,size=1.5,stroke=0.5,data=dat3b)+
+  geom_point(aes(x=LTE, y=sumdeacc, col=Species),size=1.5,stroke=0.3,data=dat3bb)+
+  geom_smooth(aes(x=LTE, y=sumdeacc), fullrange=T, color="black",size=0.8, method='lm', formula=y~x, se=F,data=dat3bb )+
+  ylab("Predicted cold hardiness (°C)") + xlab("Observed cold hardiness (°C)") + labs(color = "Species") +
+  scale_x_continuous(limits=c(-33,0))+
+  scale_y_continuous(limits=c(-33,0))+
+  geom_abline(slope=1,intercept=0, lty=1, size=0.2)+
+  geom_abline(slope=1,intercept=-5, lty=2, size=0.2)+
+  geom_abline(slope=1,intercept=5, lty=2, size=0.2)+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+
+```
+
+
+
+
+
+```{r}
+
+
+
+ggplot()+
+  geom_polygon(aes(x=Date,y=100*pdf, color=Species, fill=Species),alpha=0.5,data=fbb2)+  
+  geom_point(aes(x=Date, y=BB, fill=Species),shape=21,size=1,stroke=0.3,data=fbb)+
+  ylab("% Budbreak") + xlab("") + labs(color = "") +
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month", limits = lims2) +
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=3)
+
+
+
+
+
+
+
+
+
+a=ggplot()+
+  geom_smooth(data=dat3, aes(x=Date, y=LTE, color=Species, fill=Species),method='loess',alpha=0.3,formula=y~x, span=0.08, size=0)+ #### for now, use dat4 for only 4 genotypes
+  geom_boxplot(data=dat3, aes(x=Date, y=LTE, group=Date),lwd=0.1,fatten=4, outlier.shape=NA, alpha=1, width=386400)+
+  geom_boxplot(data=dat3, aes(x=Date, y=LTE, group=Date, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2,size=0.2)+
+  geom_hline(yintercept=0, size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=lims) +
+  facet_wrap(~Species, ncol=3)
+
+a
+
+ax=ggplot()+
+  geom_smooth(data=dat3x, aes(x=Date, y=LTE, color=Species, fill=Species),method='loess',alpha=0.3,formula=y~x, span=0.08, size=0)+ #### for now, use dat4 for only 4 genotypes
+  geom_boxplot(data=dat3x, aes(x=Date, y=LTE, group=Date),lwd=0.1,fatten=4, outlier.shape=NA, alpha=1, width=386400)+
+  geom_boxplot(data=dat3x, aes(x=Date, y=LTE, group=Date, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2,size=0.2)+
+  geom_hline(yintercept=0, size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=lims3) +
+  facet_wrap(~Species, ncol=3)
+
+ax
+
+
+
+
+
+p2=ggplot()+
+  ylab("Time to budbreak (days)") + xlab("") + labs(color = "") +
+  scale_y_continuous(limits=c(0,150), expand=c(0,0)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits = lims) +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_boxplot(data=fdatb,aes(x=ColDate,y=(BBtime), group=ColDate, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  geom_point(data=dat3, aes(x=Date, y=-5, color=Species, fill=Species),shape=21)+ #This is here to keep color scheme
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  geom_hline(yintercept = 15,lty=2,size=0.1,color="black")+
+  facet_wrap(~Species, ncol=3)
+
+p2
+
+p2x=ggplot()+
+  ylab("Time to budbreak (days)") + xlab("") + labs(color = "") +
+  scale_y_continuous(limits=c(0,150), expand=c(0,0)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits = lims3) +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_boxplot(data=fdatb,aes(x=ColDate,y=(BBtime), group=ColDate, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  geom_point(data=dat3, aes(x=Date, y=-5, color=Species, fill=Species),shape=21)+ #This is here to keep color scheme
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  geom_hline(yintercept = 15,lty=2,size=0.1,color="black")+
+  facet_wrap(~Species, ncol=3)
+
+p2x
+
+
+p2+p2x
+
+
+
+
+ggplot()+
+  geom_hline(aes(yintercept=1, col=Species), data=slp2)+
+  geom_line(data=slp2, aes(x=portions, y= pred, group=Species,color=Species ), size=0.8)+
+  geom_point(data=slpc,aes(x=portions, y=R.slope2, group=Species,fill=Species),shape=21,stroke=0.3, size=1)+
+  ylab("Rate proportion") + xlab("Chill portions") + labs(color = "") +
+  scale_y_continuous(limits=c(-0.,NA))+
+  scale_x_continuous(limits=c(0,110), breaks=c(0,25,50,75,100))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=3)
+
+
+
+
+
+
+
+
+
+
+
+
+c=ggplot(data=slp2)+
+  ylab("Rate proportion") + xlab("Accumulated chill (portions)") + labs(color = "") +
+  geom_line(aes(x=portions, y= pred, group=Species,color=Species ), size=0.4)+
+  geom_line(aes(x=portions,y=pred2), size=0.4, lty=5)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_y_continuous(limits=c(0,1),expand=c(0,0))+
+  scale_x_continuous(limits=c(0,128), expand = c(0,0), breaks=c(0,25,50,75,100,125))+
+  theme_bw(base_size = 7)+
+  theme(legend.direction = 'vertical', 
+        legend.position = "none",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+c
+
+
+
+d=ggplot()+
+  #geom_hline(yintercept=59.378,lty=2)+
+  geom_errorbar(data=fdatbmean4,aes(ymin=portions-ReqBB.error, ymax=portions+ReqBB.error, x=Species, color=Species),lwd=0.2, width=0)+
+  geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=21)+
+  geom_point(data=slpcoef,aes(x=Species, y=c+200, color=Species, fill=Species), shape=22)+ # This is here to keep color scheme
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_y_continuous(limits=c(30,105))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+d
+
+d2=ggplot()+
+  geom_hline(yintercept=66.01,lty=2,size=0.2)+
+  geom_errorbar(data=slpcoef,aes(ymin=c-c.error, ymax=c+c.error, x=Species, color=Species),lwd=0.2, width=0)+
+  #geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=21, position=position_nudge(x=-0))+
+  geom_point(data=slpcoef,aes(x=Species, y=c, color=Species, fill=Species), shape=15, size=2)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_y_continuous(limits=c(30,105))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+d2
+
+
+#(c+d)/(c+d)
+
+layout <- "
+AAAAAAAAAAA#
+BBBBBBCCCCCC
+"
+
+c+d2+d+plot_layout(design=layout)
+
+
+
+#plot_grid(a,p2, ncol=1)
+
+
+
+
+
+
+datmq=aggregate(q~Species, datm3, mean)
+datmqerror=aggregate(q~Species,datm3, sd)
+colnames(datmqerror)=c("Species","q.error")
+datmq=merge(datmq,datmqerror)
+
+
+qgraph=ggplot()+
+  geom_hline(yintercept=-14, lty=2, size=0.2)+
+  geom_hline(yintercept=0, size=0.1)+
+  #geom_errorbar(data=datmq,aes(ymin=q-q.error, ymax=q+q.error, x=Species, color=Species),
+  #              width=0, size=0.3)+
+  geom_point(data=datmq,aes(x=Species,y=q, fill=Species, color=Species),size=2, shape=15)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species),fill="white", position=position_nudge(x=0.2), width=0.4, alpha=1, outlier.shape = NA)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species, fill=Species),position=position_nudge(x=0.2), width=0.4, alpha=0.15, outlier.shape = NA)+
+  geom_boxplot(data=maxCH2,aes(x=Species, y=LTE, color=Species, fill=Species),position=position_nudge(x=-0), lwd=0.25,fatten=4,outlier.size=0.5, width=0.7, alpha=0.7)+
+  #geom_point(data=datm3, aes(x=Species, y=q, col=Species),stat="summary", fun="mean", size=1, position=position_nudge(x=0.2))+
+  ylab("Cold hardiness (°C)") + xlab("")+labs(color="")+
+  scale_y_continuous(limits=c(-40,5), breaks=c(-40,-30,-20,-10,0,5,20,30))+
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+qgraph
+
+
+
+ratemean=aggregate(Rate~Species,maxRate,mean)
+rateerror=aggregate(Rate~Species,maxRate,sd)
+colnames(rateerror)=c("Species","R.error")
+ratemean=merge(ratemean,rateerror)
+
+ratemean$R.error=ratemean$R.error*2
+
+rategraph=ggplot()+
+  #geom_boxplot(data=maxRate, aes(x=Species, y=log(Rate,2), color=Species,fill=Species),outlier.size=0.5, width=0.4, alpha=0.6)+
+  geom_errorbar(data=ratemean,aes(ymin=log(Rate-R.error+1,2), ymax=log(Rate+R.error+1,2), x=Species, color=Species),
+                width=0, size=0.3)+
+  geom_point(data=ratemean,aes(x=Species,y=log(Rate+1,2), fill=Species, color=Species),size=2, shape=21)+
+  scale_y_continuous(limits=c(0,NA), breaks=c(log(0+1,2),log(0.5+1,2),log(1+1,2),log(2+1,2),log(4+1,2),log(6+1,2),log(8+1,2),log(10+1,2)), labels=c(0,0.5,1,2,4,6,8,10), expand=c(0,0))+
+  ylab("Rate (°C/day)")+ xlab("")+
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+rategraph
+
+
+avAll$path=-(avAll$LTE-avAll$q)
+
+
+pathgraph=ggplot()+
+  geom_segment(data=avAll, aes(x=Species, y=0,xend=Species, yend=path, color=Species),arrow = arrow(length = unit(0.4, "lines"))) +
+  #geom_point(data=avAll, aes(x=Species, y=path, color=Species, fill=Species),size=1, shape=24)+
+  scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Path length (°C)")+ xlab("")+
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+
+
+qpath=qgraph/pathgraph+plot_layout(heights=c(1,0.4))
+
+qgraph+pathgraph
+
+#(rategraph+(qpath))/(c+d+d2)+plot_layout()
+
+(rategraph+c)/(d+d2+qpath)
+
+
+
+
+
+
+fbbgraph2=ggplot(data=letse)+
+  geom_smooth(aes(x=FieldBB, y=predictedBB), fullrange=T, color="black",size=0.5, method='lm', formula=y~x, se=F)+
+  geom_abline(slope=1,intercept=0, lty=2, size=0.2)+
+  geom_errorbar(aes(ymin=lowinterval, ymax=highinterval, x=FieldBB, color=Species),lwd=0.2, width=0)+
+  geom_errorbarh(aes(xmin=fbblow, xmax=fbbhigh, y=predictedBB, color=Species),lwd=0.2, height=0)+
+  geom_point(aes(x=FieldBB, y=predictedBB, color=Species),size=1.5)+
+  ylab("Predicted BB (day of year)")+xlab("Observed BB (day of year)")+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_x_continuous(limits=c(60,165),breaks=c(60,90,120,150))+
+  scale_y_continuous(limits=c(60,165),breaks=c(60,90,120,150,180))+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 6)+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'))
+
+
+fbbgraph2
+
+ggplot()+
+  geom_jitter(data=dattemp2,  aes(x=Day, y= LTE, fill=as.factor(Temperature)),shape=21, size=1, stroke=0.3) +
+  geom_smooth(data=dattemp2, method='lm', formula=y~x, aes(x=Day, y= LTE, color=as.factor(Temperature)), se=F, size=0.8)+
+  ylab("Cold hardiness (°C)") + xlab("Time (d)") +
+  scale_y_continuous(breaks = c(-40,-30,-20,-10,0), limits=c(-32,0)) +
+  #scale_x_datetime(date_labels= "%d", date_breaks = "1 day") +
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033"))+
+  scale_fill_manual(values=c("#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033"))+
+  theme_bw(base_size = 7)+
+  theme(legend.direction = 'vertical',
+        strip.background = element_rect(color="#CCCCCC"),
+        legend.position = 'none',
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        legend.text.align= 0,
+        legend.background = element_rect(fill="transparent"),
+        legend.key = element_rect(),
+        panel.border = element_rect(size=0.1,color="black"),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(size=7,angle=0,vjust=0, hjust=0.5))+
+  facet_grid(Species~Temperature)
+
+
+ggplot()+
+  geom_jitter(data=dattemp2x, aes(x=Day, y= LTE, fill=as.factor(Temperature)),shape=21, size=1, stroke=0.3) +
+  geom_smooth(data=dattemp2x, method='lm', formula=y~x, aes(x=Day, y= LTE, color=as.factor(Temperature)), se=F, size=0.8)+
+  ylab("Cold hardiness (°C)") + xlab("Time (d)") +
+  scale_y_continuous(breaks = c(-40,-30,-20,-10,0), limits=c(-32,0)) +
+  #scale_x_datetime(date_labels= "%d", date_breaks = "1 day") +
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033"))+
+  scale_fill_manual(values=c("#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033"))+
+  theme_bw(base_size = 7)+
+  theme(legend.direction = 'vertical',
+        strip.background = element_rect(color="#CCCCCC"),
+        legend.position = 'none',
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        legend.text.align= 0,
+        legend.background = element_rect(fill="transparent"),
+        legend.key = element_rect(),
+        panel.border = element_rect(size=0.1,color="black"),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(size=7,angle=0,vjust=0, hjust=0.5))+
+  facet_grid(Species~Temperature)
+
+
+
+
+Tdat=data.frame(Temperature=seq(0,32,0.25))
+Tdat=merge(letsgraph,Tdat)
+Tdat$correction=(Tdat$Rate22/Tdat$Rate)
+Tdat$RealRate=(Tdat$Int+Tdat$T1*Tdat$Temperature+Tdat$T2*(Tdat$Temperature^2)+Tdat$T3*(Tdat$Temperature^3))/Tdat$correction
+Tdatbi=aggregate(correction~Species,Tdat,mean)
+Tdatb=merge(Tdatbi,dattemp3)
+Tdatc=letsgraph
+Tdatc$Rate[c(1,2,4,5,6,7,8,9,10,12,13,15)]=100
+
+Tdatbx=merge(Tdatbi,dattemp3graph)
+
+
+letsgraph2=letsgraph
+letsgraph3=subset(dattemp3graph, dattemp3graph$Temperature %in% 22 )[1:3]
+letsgraph2=letsgraph2[c(1,3,21)]
+letsgraph2$Corr1=letsgraph2$Rate22/letsgraph2$Rate
+letsgraph2=letsgraph2[c(1,3,4)]
+
+letsgraph2=merge(letsgraph3,letsgraph2)
+letsgraph2$correction=(letsgraph2$Rate/letsgraph2$Rate22)*letsgraph2$Corr1
+
+letsgraph2=letsgraph2[c(1,5)]
+
+dattemp3graphi=merge(dattemp3graph,letsgraph2)
+
+
+Tresp=ggplot()+
+  #geom_hline(yintercept=0, size=0.1)+
+  geom_line(data=Tdat,aes(x=Temperature,y=RealRate, color=Species))+
+  geom_point(data=Tdatb,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
+  geom_point(data=dattemp3graph,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
+  #geom_errorbar(data=Tdatb,aes(ymin=(Rate-k.error)/correction,ymax=(Rate+k.error)/correction,x=Temperature+0.2, group=Species),width=0, size=0.1)+
+  #geom_errorbar(data=Tdatbx,aes(ymin=(Rate-k.error)/correction,ymax=(Rate+k.error)/correction,x=Temperature-0.2, group=Species),width=0, size=0.1)+
+  geom_point(data=Tdatb,aes(x=Temperature+0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatbx,aes(x=Temperature-0.2,y=(Rate/CorRate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatc,aes(x=22,y=(Rate), fill=Species),size=1,stroke=0.3, shape=21)+
+  #geom_smooth(data=dat4b,aes(x=Temperature,y=Ratio, color=Species),method='lm',formula=y~x,se=F)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  ylab("Deacc rate")+xlab("Temperature (°C)") +
+  scale_x_continuous(limits=c(0,31),breaks=c(0,2,4,7,11,15,22,30))+
+  scale_y_continuous(limits=c(-0.1,13),breaks=c(0,3,6,9,12))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=3)
+
+
+
+Tresp
+
+
+
+
+
+
+
+
+
+
+tgraph=ggplot()+
+  geom_line(data=datw,aes(x=Date, y=Temperature, color=Temperature), size=0.2)+
+  geom_line(data=datwx,aes(x=Date, y=Temperature, color=Temperature), size=0.2)+
+  geom_hline(yintercept=0,size=0.1)+
+  #geom_hline(yintercept=-14,size=0.2,lty=2)+
+  scale_y_continuous(limits=c(-15,32),breaks=c(-10,0,10,20,30))+
+  ylab("Temperature (°C)") + xlab("") + labs(color = "") +
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month") +
+  scale_colour_gradientn(colors=c("#333366","#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033") ) +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+chillgraph=ggplot()+
+  geom_line(data=datw,aes(x=Date, y=portions), size=0.4)+
+  geom_line(data=datwx,aes(x=Date, y=portions), size=0.4)+
+  scale_y_continuous(limits=c(0,155),breaks=c(0,25,50,75,100,125,150), expand=c(0,0))+
+  ylab("Accumulated chill (portions)") + xlab("") + labs(color = "") +
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month") +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+tgraph/chillgraph+plot_layout(heights = c(1,0.3))
+
+
+
+
+res.plotrate=ggplot()+
+  geom_hline(yintercept=0, size=0.2)+
+  geom_point(data=dattemp3i,aes(x=Temperature, y=studres(lm5), fill=Species),position=position_dodge(width=1), shape=21)+
+  geom_point(data=Tdatc,aes(x=7, y=q*100, fill=Species), shape=21)+ #This is here to keep color scheme
+  scale_y_continuous(limits=c(-6,6))+
+  scale_x_continuous(limits=c(0,31),breaks=c(0,2,4,7,11,15,22,30))+
+  ylab("Residuals")+ xlab("Temperature (°C)")+labs(fill="Species")+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_fill_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "bottom",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'))
+
+res.plotrate
+
+
+
+res.plot=ggplot()+
+  geom_point(aes(x=dat2a$LTE, y=dat2a$LTE-lm2$fitted.values), size=1, shape=1)+
+  geom_hline(yintercept=0, size=0.2)+
+  xlab("Cold hardiness (°C)")+ ylab("Residuals (°C)")+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #geom_segment(aes(x=-13,y=-10,xend=-3,yend=0), color="red", lty=2)+
+  geom_segment(aes(x=-3,y=-10,xend=-3,yend=10), color="red", lty=2)
+res.plot
+
+
+res.plotrate/res.plot
+
+
+#### All collections for each species plotted separately ####
+
+
+for (i in levels(dat2$Species)) {
+  
+    
+    dat2b=subset(dat2a, Species %in% i)
+  
+    dat6c=subset(subset(dat2a, Species %in% i), Collection %in% c("AA20","AB20","AC20","AD20","AE20","AF20","AG20","AH20","AI20","AJ20","AK20",
+                                                                  "AL20","AM20","AN20","AO20","AP20","AQ20","AR20","AS20","AT20","AU20",
+                                                                  "AV20","AW20","AX20","AY20","AZ20","BA20"))
+    fdatc=subset(subset(fdat, Species %in% i), Collection %in% c("AA20","AB20","AC20","AD20","AE20","AF20","AG20","AH20","AI20","AJ20","AK20",
+                                                                  "AL20","AM20","AN20","AO20","AP20","AQ20","AR20","AS20","AT20","AU20",
+                                                                  "AV20","AW20","AX20","AY20","AZ20","BA20"))
+    
+    dat6d=subset(subset(dat2, Species %in% i), Collection %in% c("AA20","AB20","AC20","AD20","AE20","AF20","AG20","AH20","AI20","AJ20","AK20",
+                                                                  "AL20","AM20","AN20","AO20","AP20","AQ20","AR20","AS20","AT20","AU20",
+                                                                  "AV20","AW20","AX20","AY20","AZ20","BA20"))
+    
+    #dattui=aggregate(BBtime~Species+Collection,fdatc,mean)
+    #dattui=merge(dattui,x=c(0,-20))
+    
+    
+      print(ggplot()+
+            geom_jitter(data=dat6c,aes(x=Day, y=LTE, fill=Collection),shape=21, stroke=0.3, size=1)+
+            geom_smooth(data=dat6c,aes(x=Day, y=LTE, col=Collection, fill=Collection),fullrange=F, size=0.8, method="lm",formula=y~x)+
+            #geom_point(data=dat6d,aes(x=Day, y=LTE, fill=Collection),stat="summary",fun="mean", shape=21, stroke=0.3, size=1)+
+            #geom_density(data=fdatc,aes(x=BBtime, col=Collection, fill=Collection, y=..count..*3),alpha=0.5,adjust=2,n=1000, kernel="cosine")+
+            geom_hline(yintercept=0, size=0.2)+
+            #geom_hline(yintercept=qcoef$qvalue[qcoef$Species==i])+
+            #geom_line(aes(x=BBtime,y=x,col=Collection),data=dattui)+
+            geom_jitter(data=fdatc, aes(x=BBtime, y=0, fill=Collection), height=1.8, shape=25, stroke=0.3, size=1)+
+            theme_bw(base_size=7) +
+            ylab("Cold hardiness (°C)") + xlab("Time (d)")+labs(title=paste(gsub("_"," ",i)) )+
+            scale_y_continuous(limits=c(-40,5),expand=c(0,0.5), breaks=c(-40,-30,-20,-10,0))+
+            scale_x_continuous(limits=c(0,120), breaks=c(0,30,60,90,120),expand=c(0.05,0.07))+
+            theme(legend.position = "none",
+                  strip.background = element_rect(color="#CCCCCC"),
+            panel.grid = element_blank(),
+            panel.border = element_blank(),
+            axis.line.x = element_line(size=0.1,color="black"),
+            axis.line.y = element_line(size=0.1,color="black"),
+            axis.text = element_text(size=7, color="black"),
+            axis.ticks = element_line(size=0.1,color="black"),
+            axis.ticks.length = unit(0.2, 'lines'),
+            axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+            facet_wrap(~Collection,ncol=4))
+    
+  
+}
+
+
+
+for (i in levels(dat2$Species)) {
+  
+    
+    dat2b=subset(dat2a, Species %in% i)
+  
+    dat6c=subset(subset(dat2a, Species %in% i), Collection %in% c("AA21","AB21","AC21","AD21","AE21","AF21","AG21","AH21","AI21","AJ21","AK21",
+                                                                  "AL21","AM21","AN21","AO21","AP21","AQ21","AR21","AS21","AT21","AU21",
+                                                                  "AV21","AW21","AX21"))
+    fdatc=subset(subset(fdat, Species %in% i), Collection %in% c("AA21","AB21","AC21","AD21","AE21","AF21","AG21","AH21","AI21","AJ21","AK21",
+                                                                  "AL21","AM21","AN21","AO21","AP21","AQ21","AR21","AS21","AT21","AU21",
+                                                                  "AV21","AW21","AX21"))
+    
+    dat6d=subset(subset(dat2, Species %in% i), Collection %in% c("AA21","AB21","AC21","AD21","AE21","AF21","AG21","AH21","AI21","AJ21","AK21",
+                                                                  "AL21","AM21","AN21","AO21","AP21","AQ21","AR21","AS21","AT21","AU21",
+                                                                  "AV21","AW21","AX21"))
+    
+    #dattui=aggregate(BBtime~Species+Collection,fdatc,mean)
+    #dattui=merge(dattui,x=c(0,-20))
+    
+    
+      print(ggplot()+
+            geom_jitter(data=dat6c,aes(x=Day, y=LTE, fill=Collection),shape=21, stroke=0.3, size=1)+
+            geom_smooth(data=dat6c,aes(x=Day, y=LTE, col=Collection, fill=Collection),fullrange=F, size=0.8, method="lm",formula=y~x)+
+            #geom_point(data=dat6d,aes(x=Day, y=LTE, fill=Collection),stat="summary",fun="mean", shape=21, stroke=0.3, size=1)+
+            #geom_density(data=fdatc,aes(x=BBtime, col=Collection, fill=Collection, y=..count..*3),alpha=0.5,adjust=2,n=1000, kernel="cosine")+
+            geom_hline(yintercept=0, size=0.2)+
+            #geom_hline(yintercept=qcoef$qvalue[qcoef$Species==i])+
+            #geom_line(aes(x=BBtime,y=x,col=Collection),data=dattui)+
+            geom_jitter(data=fdatc, aes(x=BBtime, y=0, fill=Collection), height=1.8, shape=25, stroke=0.3, size=1)+
+            theme_bw(base_size=7) +
+            ylab("Cold hardiness (°C)") + xlab("Time (d)")+labs(title=paste(gsub("_"," ",i)) )+
+            scale_y_continuous(limits=c(-40,5),expand=c(0,0.5), breaks=c(-40,-30,-20,-10,0))+
+            scale_x_continuous(limits=c(0,120), breaks=c(0,30,60,90,120),expand=c(0.05,0.07))+
+            theme(legend.position = "none",
+                  strip.background = element_rect(color="#CCCCCC"),
+            panel.grid = element_blank(),
+            panel.border = element_blank(),
+            axis.line.x = element_line(size=0.1,color="black"),
+            axis.line.y = element_line(size=0.1,color="black"),
+            axis.text = element_text(size=7, color="black"),
+            axis.ticks = element_line(size=0.1,color="black"),
+            axis.ticks.length = unit(0.2, 'lines'),
+            axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+            facet_wrap(~Collection,ncol=4))
+    
+  
+}
+
+
+
+
+ggplot()+
+  geom_line(aes(x=Date,y=sumdeacc),data=letsc)+
+  geom_hline(aes(yintercept=q),size=0.2,lty=2, data=letsc)+
+  geom_point(aes(x=Date,y=LTE, fill=Species),shape=21,stroke=0.3, size=1,stat="summary",fun="mean", data=dat3)+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2,size=0.2)+
+  geom_errorbarh(data=letse,aes(xmin=lowintervaldate, xmax=highintervaldate, y=10, color=Species),lwd=0.3, height=2)+
+  geom_hline(yintercept=0, size=0.2)+
+    scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +  
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb) +
+  facet_wrap(~Species, ncol=3)
+
+
+
+slpcgraph=subset(slpc, Rate>-0.5)
+
+
+rp=ggplot()+
+  geom_hline(aes(yintercept=Rate, color=Species), data=avAll)+
+  geom_point(aes(x=portions,y=Rate, fill=Species),shape=21,stroke=0.3, size=1,stat="summary",fun="mean", data=slpcgraph)+
+    scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("Accumulated chill (portions)")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +  
+  #scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb) +
+  facet_wrap(~Species, ncol=3, scales="free_y")
+
+
+
+rp2=ggplot()+
+  geom_hline(aes(yintercept=Rate, color=Species), data=avAll)+
+    scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("Accumulated chill (portions)")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  scale_y_continuous(breaks = c(0,0.5,1,1.5,2,2.5,5,7.5,10), limits= c(0,10))   
+  #scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb) +
+
+rp2
+
+rp+rp2+plot_layout(widths=c(1,0.1))
+
+
+
+
+#### Matrices for surface plot ####
+
+Temp=seq(0,30,1)
+Chill=seq(1,150,1)
+
+Surf=data.frame(merge(Temp, Chill))
+colnames(Surf)=c("Temp","Chill")
+
+Surf=merge(Surf,letsgraph)
+
+
+Surf$Rat=(Surf$Int+Surf$T1*(Surf$Temp)+Surf$T2*((Surf$Temp)^2)+Surf$T3*((Surf$Temp)^3))/(Surf$Rate22/Surf$Rate)
+Surf$Rat[Surf$Rat<0]=0
+
+Surf$Psi=Surf$intcept+((1-Surf$intcept)/(1+exp(Surf$b*(log(Surf$Chill)-log(Surf$c)))))
+
+
+colors=c("#333366","#1A4D80",
+         "#006699","#008099",
+         "#009999","#33B380",
+         "#66CC66","#80CC4D",
+         "#99CC33",
+         "#CCCC33","#DDCC22","#EECC11",
+         "#FFCC00","#FFB300","#FF9900","#FF8000",
+         "#FF6600","#FF590D","#FF4D1A","#FF4026",
+         "#FF3333","#F72B33","#EE2233","#E61A33","#DD1133","#D50933",
+         "#CC0033",
+         "#C60033","#C10033","#BB0033","#B50033","#B00033","#AA0033","#A40033","#9F0033","#990033")
+
+ggplot() + 
+  geom_tile(data=Surf,aes(x=Chill, y=Temp, fill= (Rat*Psi), color=(Rat*Psi)), lwd=2)+
+  #geom_line(data=datwb,aes(x=portions, y=Temperature))+
+  #geom_vline(xintercept = 101, lty=2, size=1)+
+  #geom_point(data=setdate,aes(x=portions,y=22),shape=19)+
+  #geom_point(aes(x=82,y=c(2,4,7,11,15,22)), shape=24, fill="white")+
+  scale_colour_gradientn(colors=colors) +
+  scale_fill_gradientn(colors=colors ) +
+  scale_x_continuous(expand=c(0,0))+
+  scale_y_continuous(expand=c(0,0))+
+  ylab("Temperature (°C)")+xlab("Chill (portions)")+labs(fill = "Rate") +
+  theme_bw(base_size = 7)+
+  theme(legend.position = "right",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=5, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=3)
+
+Tdatbgraph=rbind(Tdatb[1],Tdatbx[1])
+
+
+
+for (i in levels(Surf$Species)) {
+
+Surfa=subset(Surf, Species %in% i)
+
+
+
+mat <- matrix((Surfa$Rat*Surfa$Psi), ncol=nlevels(as.factor(Surfa$Chill)),nrow=nlevels(as.factor(Surfa$Temp)))
+
+
+
+
+if (sum(which(Tdatbgraph$Species==i))>0) {
+  
+  if (sum(which(Tdatb$Species==i))>0  &  sum(which(Tdatbx$Species==i))>0) {
+
+
+    
+Tdatbsurf=subset(Tdatb, Species %in% i)
+Tdatbsurf$Chill=82
+Tdatbsurf$ln=as.numeric(rownames(Tdatbsurf))
+
+
+Tdatbsurf2=Tdatbsurf
+Tdatbsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(Tdatbsurf2$Temperature)+mean(Surfa$T2)*((Tdatbsurf2$Temperature)^2)+mean(Surfa$T3)*((Tdatbsurf2$Temperature)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(82)-log(mean(Surfa$c))))))
+
+Tdatbsurf2=rbind(Tdatbsurf,Tdatbsurf2)
+
+
+
+Tdatbsurfx=subset(dattemp3graph, Species %in% i)
+Tdatbsurfx$Chill=54
+Tdatbsurfx$ln=as.numeric(rownames(Tdatbsurfx))
+
+
+Tdatbsurf2x=Tdatbsurfx
+Tdatbsurf2x$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(Tdatbsurf2x$Temperature)+mean(Surfa$T2)*((Tdatbsurf2x$Temperature)^2)+mean(Surfa$T3)*((Tdatbsurf2x$Temperature)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(54)-log(mean(Surfa$c))))))
+
+Tdatbsurf2x=rbind(Tdatbsurfx,Tdatbsurf2x)
+
+
+
+slpsurf=subset(slpc, Species %in% i)
+slpsurf$ln=as.numeric(rownames(slpsurf))
+
+slpsurf2=slpsurf
+
+slpsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(22)+mean(Surfa$T2)*((22)^2)+mean(Surfa$T3)*((22)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(slpsurf2$portions)-log(mean(Surfa$c))))))
+
+slpsurf2=rbind(slpsurf,slpsurf2)
+
+print(
+plot_ly() %>%
+  add_trace(x = ~slpsurf2$portions, y = ~22, z = ~slpsurf2$Rate,split=~(as.factor(slpsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = ~82, y = ~Tdatbsurf2$Temperature, z = ~Tdatbsurf2$Rate,split=~(as.factor(Tdatbsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = ~54, y = ~Tdatbsurf2x$Temperature, z = ~Tdatbsurf2x$Rate,split=~(as.factor(Tdatbsurf2x$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = Tdatbsurf$Chill, y = Tdatbsurf$Temperature, showlegend=F, z = Tdatbsurf$Rate, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6
+            )) %>%
+  add_trace(x = Tdatbsurfx$Chill, y = Tdatbsurfx$Temperature, showlegend=F, z = Tdatbsurfx$Rate, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6
+            )) %>%
+  add_trace(x = ~slpsurf$portions, y = ~22, z = ~slpsurf$Rate, showlegend=F, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6)) %>%
+  add_trace(z=mat, x=as.numeric(levels(as.factor(Surfa$Chill))), y=as.numeric(levels(as.factor(Surfa$Temperature))),
+            cauto=F, cmin=0,cmax=10, 
+            colorbar=list(title="",titlefont=list(size=15, color="black"),tickfont=list(size=13, color="black") ),
+            opacity=0.7,type="surface",colorscale = list(c(0,0.04,0.095,0.16,0.22,0.3,0.38,0.48,0.6,0.8, 1),
+            c("#333366","#006699","#009999","#66CC66","#99CC33","#CCCC33","#FFCC00","#FF6600",
+              "#FF3333","#CC0033","#990033"))) %>%
+  layout(
+    title=list(text=i, y=0.95),
+    font=list(size=15),
+    scene = list(
+      xaxis = list(title = "Chill", range=c(-3,120),titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      yaxis = list(title = "Temperature", range=c(-1,30), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      zaxis = list(title = "Deacclimation Rate", range=c(0,(max(mat)*1.3)), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      camera = list(eye = list(x = -2, y = -2, z = 0.0001)),
+      showlegend=T
+    ))
+
+)
+
+}
+
+
+  if (sum(which(Tdatb$Species==i))>0  &  sum(which(Tdatbx$Species==i))==0) {
+
+
+    
+Tdatbsurf=subset(Tdatb, Species %in% i)
+Tdatbsurf$Chill=82
+Tdatbsurf$ln=as.numeric(rownames(Tdatbsurf))
+
+
+Tdatbsurf2=Tdatbsurf
+Tdatbsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(Tdatbsurf2$Temperature)+mean(Surfa$T2)*((Tdatbsurf2$Temperature)^2)+mean(Surfa$T3)*((Tdatbsurf2$Temperature)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(82)-log(mean(Surfa$c))))))
+
+Tdatbsurf2=rbind(Tdatbsurf,Tdatbsurf2)
+
+
+
+
+
+
+slpsurf=subset(slpc, Species %in% i)
+slpsurf$ln=as.numeric(rownames(slpsurf))
+
+slpsurf2=slpsurf
+
+slpsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(22)+mean(Surfa$T2)*((22)^2)+mean(Surfa$T3)*((22)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(slpsurf2$portions)-log(mean(Surfa$c))))))
+
+slpsurf2=rbind(slpsurf,slpsurf2)
+
+print(
+plot_ly() %>%
+  add_trace(x = ~slpsurf2$portions, y = ~22, z = ~slpsurf2$Rate,split=~(as.factor(slpsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = ~82, y = ~Tdatbsurf2$Temperature, z = ~Tdatbsurf2$Rate,split=~(as.factor(Tdatbsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = Tdatbsurf$Chill, y = Tdatbsurf$Temperature, showlegend=F, z = Tdatbsurf$Rate, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6
+            )) %>%
+  add_trace(x = ~slpsurf$portions, y = ~22, z = ~slpsurf$Rate, showlegend=F, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6)) %>%
+  add_trace(z=mat, x=as.numeric(levels(as.factor(Surfa$Chill))), y=as.numeric(levels(as.factor(Surfa$Temperature))),
+            cauto=F, cmin=0,cmax=10, 
+            colorbar=list(title="",titlefont=list(size=15, color="black"),tickfont=list(size=13, color="black") ),
+            opacity=0.7,type="surface",colorscale = list(c(0,0.04,0.095,0.16,0.22,0.3,0.38,0.48,0.6,0.8, 1),
+            c("#333366","#006699","#009999","#66CC66","#99CC33","#CCCC33","#FFCC00","#FF6600",
+              "#FF3333","#CC0033","#990033"))) %>%
+  layout(
+    title=list(text=i, y=0.95),
+    font=list(size=15),
+    scene = list(
+      xaxis = list(title = "Chill", range=c(-3,120),titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      yaxis = list(title = "Temperature", range=c(-1,30), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      zaxis = list(title = "Deacclimation Rate", range=c(0,(max(mat)*1.3)), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      camera = list(eye = list(x = -2, y = -2, z = 0.0001)),
+      showlegend=T
+    ))
+
+)
+
+}
+
+
+  if (sum(which(Tdatb$Species==i))==0  &  sum(which(Tdatbx$Species==i))>0) {
+
+
+    
+
+Tdatbsurfx=subset(dattemp3graph, Species %in% i)
+Tdatbsurfx$Chill=54
+Tdatbsurfx$ln=as.numeric(rownames(Tdatbsurfx))
+
+
+Tdatbsurf2x=Tdatbsurfx
+Tdatbsurf2x$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(Tdatbsurf2x$Temperature)+mean(Surfa$T2)*((Tdatbsurf2x$Temperature)^2)+mean(Surfa$T3)*((Tdatbsurf2x$Temperature)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(54)-log(mean(Surfa$c))))))
+
+Tdatbsurf2x=rbind(Tdatbsurfx,Tdatbsurf2x)
+
+
+
+slpsurf=subset(slpc, Species %in% i)
+slpsurf$ln=as.numeric(rownames(slpsurf))
+
+slpsurf2=slpsurf
+
+slpsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(22)+mean(Surfa$T2)*((22)^2)+mean(Surfa$T3)*((22)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(slpsurf2$portions)-log(mean(Surfa$c))))))
+
+slpsurf2=rbind(slpsurf,slpsurf2)
+
+print(
+plot_ly() %>%
+  add_trace(x = ~slpsurf2$portions, y = ~22, z = ~slpsurf2$Rate,split=~(as.factor(slpsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = ~54, y = ~Tdatbsurf2x$Temperature, z = ~Tdatbsurf2x$Rate,split=~(as.factor(Tdatbsurf2x$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = Tdatbsurfx$Chill, y = Tdatbsurfx$Temperature, showlegend=F, z = Tdatbsurfx$Rate, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6
+            )) %>%
+  add_trace(x = ~slpsurf$portions, y = ~22, z = ~slpsurf$Rate, showlegend=F, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6)) %>%
+  add_trace(z=mat, x=as.numeric(levels(as.factor(Surfa$Chill))), y=as.numeric(levels(as.factor(Surfa$Temperature))),
+            cauto=F, cmin=0,cmax=10, 
+            colorbar=list(title="",titlefont=list(size=15, color="black"),tickfont=list(size=13, color="black") ),
+            opacity=0.7,type="surface",colorscale = list(c(0,0.04,0.095,0.16,0.22,0.3,0.38,0.48,0.6,0.8, 1),
+            c("#333366","#006699","#009999","#66CC66","#99CC33","#CCCC33","#FFCC00","#FF6600",
+              "#FF3333","#CC0033","#990033"))) %>%
+  layout(
+    title=list(text=i, y=0.95),
+    font=list(size=15),
+    scene = list(
+      xaxis = list(title = "Chill", range=c(-3,120),titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      yaxis = list(title = "Temperature", range=c(-1,30), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      zaxis = list(title = "Deacclimation Rate", range=c(0,(max(mat)*1.3)), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      camera = list(eye = list(x = -2, y = -2, z = 0.0001)),
+      showlegend=T
+    ))
+
+)
+
+}
+  
+  
+
+
+  } else {
+  
+slpsurf=subset(slpc, Species %in% i)
+slpsurf$ln=as.numeric(rownames(slpsurf))
+
+slpsurf2=slpsurf
+
+slpsurf2$Rate=((mean(Surfa$Int)+mean(Surfa$T1)*(22)+mean(Surfa$T2)*((22)^2)+mean(Surfa$T3)*((22)^3))/(mean(Surfa$Rate22)/mean(Surfa$Rate)))*(mean(Surfa$intcept)+ (1-mean(Surfa$intcept))/(1+exp(mean(Surfa$b)*(log(slpsurf2$portions)-log(mean(Surfa$c))))))
+
+slpsurf2=rbind(slpsurf,slpsurf2)
+
+print(
+plot_ly() %>%
+  add_trace(x = ~slpsurf2$portions, y = ~22, z = ~slpsurf2$Rate,split=~(as.factor(slpsurf2$ln)),
+              type = "scatter3d", mode = "lines",line=list( color="black"), showlegend=F) %>%
+  add_trace(x = ~slpsurf$portions, y = ~22, z = ~slpsurf$Rate, showlegend=F, type = "scatter3d", mode = "markers",
+            marker = list(
+            color = 'black',
+            size = 6)) %>%
+  add_trace(z=mat, x=as.numeric(levels(as.factor(Surfa$Chill))), y=as.numeric(levels(as.factor(Surfa$Temperature))),
+            cauto=F, cmin=0,cmax=10, 
+            colorbar=list(title="",titlefont=list(size=15, color="black"),tickfont=list(size=13, color="black") ),
+            opacity=0.70,type="surface",colorscale = list(c(0,0.04,0.095,0.16,0.22,0.3,0.38,0.48,0.6,0.8, 1),
+            c("#333366","#006699","#009999","#66CC66","#99CC33","#CCCC33","#FFCC00","#FF6600",
+              "#FF3333","#CC0033","#990033"))) %>%
+  layout(
+    title=list(text=i, y=0.95),
+    font=list(size=15),
+    scene = list(
+      xaxis = list(title = "Chill", range=c(-3,120),titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      yaxis = list(title = "Temperature", range=c(-1,30), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      zaxis = list(title = "Deacclimation Rate", range=c(0,(max(mat)*1.3)), titlefont=list(size=16), tickfont=list(size=13), color="black"),
+      camera = list(eye = list(x = -2, y = -2, z = 0.0001)),
+      showlegend=T
+    )
+    )
+  
+  
+)
+
+}
+  
+  
+}
+
+
+
+
+#### Subsetting for actual figures in paper ####
+
+dattemp2k=subset(dattemp2, Species %in% k)
+dattemp2k=subset(dattemp2k, Temperature %in% c(2,11,22))
+
+
+tk=ggplot()+
+  geom_smooth(data=dattemp2k, method='lm', formula=y~x, aes(x=Day, y= LTE, color=as.factor(Temperature)), se=F, size=0.8)+
+  geom_point(data=dattemp2k, stat="summary",fun="mean", aes(x=Day, y= LTE, fill=as.factor(Temperature)),shape=21, size=1, stroke=0.3) +
+  
+  geom_hline(yintercept=0, size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("Time (d)") +
+  scale_y_continuous(limits=c(-31,14.5),expand=c(0,0.5), breaks=c(-30,-20,-10,0))+
+  scale_x_continuous(limits=c(0,100), breaks=c(0,30,60,90,120),expand=c(0.05,0.07))+
+  #scale_x_datetime(date_labels= "%d", date_breaks = "1 day") +
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#333366","#99CC33","#FF6600"), labels=c("2°C","11°C","22°C"))+
+  scale_fill_manual(values=c("#333366","#99CC33","#FF6600"), labels=c("2°C","11°C","22°C"))+
+  theme_bw(base_size = 7)+
+  theme(legend.direction = 'vertical',
+        strip.background = element_rect(color="#CCCCCC"),
+        legend.position = c(0.8,0.85),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.5, 'lines'),
+        legend.text.align = 1,
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=1)
+
+tk
+
+
+
+dat6=subset(dat2a,  Species %in% c(k))
+dat4b=merge(dat3,slpb)
+dat6b=merge(dat6,slpb)
+
+
+
+dat7=subset(subset(dat6b, Species %in% k), Collection %in% c("AI20","AN20","AW20"))
+fdat2=subset(subset(fdat, Species %in% k), Collection %in% c("AI20","AN20","AW20"))
+
+b=ggplot()+
+  geom_smooth(data=dat7,aes(x=Day, y=LTE, col=Collection, fill=Collection), size=0.8, method="lm",formula=y~x)+
+  geom_point(data=dat7,aes(x=Day, y=LTE, fill=Collection),stat="summary",shape=21,stroke=0.3, size=1)+
+  geom_density(data=fdat2,aes(x=BBtime, col=Collection, fill=Collection, y=..count..*3),size=0.2,alpha=0.5,adjust=2,n=1000, kernel="cosine")+
+  geom_hline(yintercept=0, size=0.2)+
+  geom_jitter(data=fdat2, aes(x=BBtime, y=0, fill=Collection), shape=25,stroke=0.3,height=1, size=1)+
+  theme_bw(base_size=7) +
+  scale_color_manual(values=c("#91D1C2FF","#8491B4FF","#F39B7FFF"), labels=c("23","45","84"))+
+  scale_fill_manual(values=c("#91D1C2FF","#8491B4FF","#F39B7FFF"), labels=c("23","45","84"))+
+  ylab("Cold hardiness (°C)") + xlab("Time (d)")+
+  scale_y_continuous(limits=c(-31,14.5),expand=c(0,0.5), breaks=c(-30,-20,-10,0))+
+  scale_x_continuous(limits=c(0,100), breaks=c(0,30,60,90,120),expand=c(0.05,0.07))+
+  theme(legend.direction = 'vertical',
+        strip.background = element_rect(color="#CCCCCC"),
+        legend.position = c(0.8,0.85),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=1)
+
+
+b
+
+
+b+tk
+
+
+
+
+
+
+
+
+
+
+slp2k=subset(slp2, Species %in% k)
+
+
+ck=ggplot(data=slp2k)+
+  ylab("Rate proportion") + xlab("Chill portions") + labs(color = "") +
+  geom_line(aes(x=portions, y= pred, group=Species,color=Species ), size=0.4)+
+  geom_line(aes(x=portions,y=pred2), size=0.4, lty=5)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"), labels=c("AB","CC","FM","LK"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_fill_viridis_d()+
+  scale_y_continuous(limits=c(0,1.05),expand=c(0,0))+
+  scale_x_continuous(limits=c(0,128), expand = c(0,0), breaks=c(0,25,50,75,100,125))+
+  theme_bw(base_size = 7)+
+  theme(legend.direction = 'vertical', 
+        legend.position = c(0.8,0.45),
+        legend.background = element_rect(fill="transparent"),
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+ck
+
+
+fdatbmean4k=subset(fdatbmean4, Species %in% k)
+slpcoefk=subset(slpcoef, Species %in% k)
+
+
+dk=ggplot()+
+  #geom_hline(yintercept=59.378,lty=2)+
+  geom_errorbar(data=fdatbmean4k,aes(ymin=portions-ReqBB.error, ymax=portions+ReqBB.error, x=Species, color=Species),lwd=0.2, width=0)+
+  geom_point(data=fdatbmean4k, aes(x=Species,y=portions, color=Species, fill=Species),shape=21,size=1.5)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("AB","CC","FM","LK"))+
+  scale_y_continuous(limits=c(30,105))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+dk
+
+
+
+d2k=ggplot()+
+  geom_hline(yintercept=67.45,lty=2,size=0.2)+
+  geom_errorbar(data=slpcoefk,aes(ymin=c-c.error, ymax=c+c.error, x=Species, color=Species),lwd=0.2, width=0)+
+  #geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=21, position=position_nudge(x=-0))+
+  geom_point(data=slpcoefk,aes(x=Species, y=c, color=Species, fill=Species), shape=22, size=1.5)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("AB","CC","FM","LK"))+
+  scale_y_continuous(limits=c(30,105))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+d2k
+
+(ck+(d2k+dk))/ck
+
+
+
+
+Tdatk=subset(Tdat, Species %in% k)
+Tdatbk=subset(Tdatb, Species %in% k)
+Tdatbxk=subset(Tdatbx, Species %in% k)
+
+
+Trespk=ggplot()+
+  geom_hline(yintercept=3, size=0.1, lty=2)+
+  geom_line(data=Tdatk,aes(x=Temperature,y=RealRate, color=Species))+
+  #geom_point(data=Tdatbk,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
+  #geom_errorbar(data=Tdatbk,aes(ymin=(Rate-k.error)/correction, ymax=(Rate+k.error)/correction, x=Temperature, group=Species),width=0, size=0.1)+
+  geom_point(data=Tdatbk,aes(x=Temperature+0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  #geom_point(data=Tdatc,aes(x=22,y=(Rate), fill=Species),size=1,stroke=0.3, shape=21)+
+  #geom_smooth(data=dat4b,aes(x=Temperature,y=Ratio, color=Species),method='lm',formula=y~x,se=F)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  ylab("Deacc rate")+xlab("Temperature (°C)") +
+  scale_x_continuous(limits=c(0,31),breaks=c(0,2,4,7,11,15,22,30))+
+  scale_y_continuous(limits=c(-0.1,13),breaks=c(0,3,6,9,12))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=2)
+
+
+
+
+
+
+Trespk2=ggplot()+
+  #geom_hline(yintercept=2.5, size=0.1, lty=2)+
+  geom_line(data=Tdatk,aes(x=Temperature,y=RealRate, color=Species))+
+  #geom_point(data=Tdatbk,aes(x=Temperature,y=(Rate), color=Species),size=1, shape=1)+
+  #geom_errorbar(data=Tdatbk,aes(ymin=(Rate-k.error)/correction, ymax=(Rate+k.error)/correction, x=Temperature, group=Species),width=0, size=0.1)+
+  geom_point(data=Tdatbk,aes(x=Temperature+0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  geom_point(data=Tdatbxk,aes(x=Temperature-0.2,y=(Rate)/correction, fill=Species),size=1,stroke=0.3, shape=21)+
+  #geom_point(data=Tdatc,aes(x=22,y=(Rate), fill=Species),size=1,stroke=0.3, shape=21)+
+  #geom_smooth(data=dat4b,aes(x=Temperature,y=Ratio, color=Species),method='lm',formula=y~x,se=F)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  ylab("Deacc rate")+xlab("Temperature (°C)") +
+  scale_x_continuous(limits=c(0,31),breaks=c(0,2,4,7,11,15,22,30))+
+  scale_y_continuous(limits=c(-0.1,3.1),breaks=c(0,0.5,1,1.5,2,2.5,3,6,9,12))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  facet_wrap(~Species, ncol=2)
+
+Trespk2/Trespk
+
+
+
+
+dat3k=subset(dat3, Species %in% k)
+fbb2k=subset(fbb2, Species %in% k)
+
+ak=ggplot()+
+  geom_smooth(data=dat3k, aes(x=Date, y=LTE, color=Species, fill=Species),method='loess',alpha=0.3,formula=y~x, span=0.08, size=0)+ #### for now, use dat4 for only 4 genotypes
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date),lwd=0.1,fatten=4, outlier.shape=NA, alpha=1, width=386400)+
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2k,size=0.2)+
+  geom_hline(yintercept=0, size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,14)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=lims) +
+  facet_wrap(~Species, ncol=4)
+
+ak
+
+
+
+
+fdatbk=subset(fdatb, Species %in% k)
+
+
+p2k=ggplot()+
+  ylab("Time to budbreak (days)") + xlab("") + labs(color = "") +
+  scale_y_continuous(limits=c(0,160), expand=c(0,0), breaks=c(0,30,60,90,120,150)) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits = lims) +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_boxplot(data=fdatbk,aes(x=ColDate,y=(BBtime), group=ColDate, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  #geom_point(data=dat3, aes(x=Date, y=-5, color=Species, fill=Species),shape=21)+ #This is here to keep color scheme
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  geom_hline(yintercept = 15,lty=2,size=0.1,color="black")+
+  facet_wrap(~Species, ncol=4)
+
+p2k
+
+
+
+ak/p2k
+
+
+
+ap2k=ggplot()+
+  geom_smooth(data=dat3k, aes(x=Date, y=LTE, color=Species, fill=Species),method='loess',alpha=0.3,formula=y~x, span=0.08, size=0)+ #### for now, use dat4 for only 4 genotypes
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date),lwd=0.1,fatten=4, outlier.shape=NA, alpha=1, width=386400)+
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+
+  geom_hline(yintercept = 3.75,lty=2,size=0.1,color="black")+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species),alpha=1, fill="white", data=fbb2k,size=0.1)+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2k,size=0.1)+
+  geom_boxplot(data=fdatbk,aes(x=ColDate,y=(BBtime)/4, group=ColDate, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_hline(yintercept=0, size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,NA), sec.axis = sec_axis(~ .*4, breaks=c(0,30,60,90,120,150), name="Time to budbreak (d)")) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=lims) +
+  facet_wrap(~Species, ncol=4)
+
+
+
+ap2k
+
+
+
+
+
+fbbgraph2k=ggplot(data=letse)+
+  geom_smooth(aes(x=FieldBB, y=predictedBB), fullrange=T, color="black",size=0.5, method='lm', formula=y~x, se=F)+
+  geom_abline(slope=1,intercept=0, lty=2, size=0.2)+
+  geom_errorbar(aes(ymin=lowinterval, ymax=highinterval, x=FieldBB, color=Species),lwd=0.2, width=0)+
+  geom_errorbarh(aes(xmin=fbblow, xmax=fbbhigh, y=predictedBB, color=Species),lwd=0.2, height=0)+
+  geom_point(aes(x=FieldBB, y=predictedBB, color=Species),size=1.5)+
+  ylab("Predicted budbreak (day of year)")+xlab("Observed budbreak (day of year)")+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_x_continuous(limits=c(60,165),breaks=c(60,90,120,150))+
+  scale_y_continuous(limits=c(60,165),breaks=c(60,90,120,150,180))+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'))
+
+fbbgraph2k
+
+
+
+Trespk2/Trespk
+(ck+(d2k+dk))/ck
+
+(Trespk2+(ck+(d2k+dk))/fbbgraph2k)/(Trespk+(ck+(d2k+dk))/fbbgraph2k)
+
+
+
+
+avAllk=subset(avAll, Species %in% c("Abies_balsamea","Forsythia"))
+slpcgraphk=subset(slpcgraph, Species %in% c("Abies_balsamea","Forsythia"))
+
+int1=avAllk$Rate[avAllk$Species=="Abies_balsamea"]
+int2=avAllk$Rate[avAllk$Species=="Forsythia"]
+
+ratek1=ggplot()+
+  geom_abline(slope=0,intercept=int2, color="#00A087FF",lty=2)+
+  geom_abline(slope=0,intercept=int1, color="#E64B35FF",lty=2)+
+  geom_hline(aes(yintercept=Rate, color=Species), data=avAllk)+
+  geom_point(aes(x=portions,y=Rate, fill=Species),shape=21,stroke=0.3, size=1,stat="summary",fun="mean", data=slpcgraphk)+
+    scale_color_manual(values=c("#E64B35FF","#00A087FF"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#00A087FF"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("Accumulated chill (portions)")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +  
+  #scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb)+
+  facet_wrap(~Species, ncol=1)
+
+ratek1
+
+ratek2=ggplot()+
+  geom_abline(slope=0,intercept=int2, color="#00A087FF",lty=2)+
+  geom_abline(slope=0,intercept=int1, color="#E64B35FF",lty=2)+
+  geom_hline(aes(yintercept=Rate, color=Species), data=avAllk)+
+  geom_point(aes(x=portions,y=Rate, fill=Species),shape=21,stroke=0.3, size=1,stat="summary",fun="mean", data=slpcgraphk)+
+    scale_color_manual(values=c("#E64B35FF","#00A087FF"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#00A087FF"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("Accumulated chill (portions)")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  scale_y_continuous(limits= c(NA,1.5)) +  
+  #scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb)+
+  facet_wrap(~Species, ncol=1)
+
+ratek2
+
+(ratek1+ratek2)/(ratek1+ratek2)
+
+
+slp2k=subset(slp2, Species %in% c("Abies_balsamea","Forsythia"))
+slpck=subset(slpc, Species %in% c("Abies_balsamea","Forsythia"))
+
+psik=ggplot()+
+  geom_hline(aes(yintercept=1, col=Species), data=slp2k)+
+  geom_abline(slope=0,intercept=0.99, color="#E64B35FF",lty=1)+
+  geom_line(data=slp2k, aes(x=portions, y= pred, group=Species,color=Species ), size=0.8)+
+  geom_point(data=slpck,aes(x=portions, y=R.slope2, group=Species,fill=Species),shape=21,stroke=0.3, size=1)+
+  ylab("Rate proportion") + xlab("Chill portions") + labs(color = "") +
+  scale_y_continuous(limits=c(-0.,NA), breaks=c(0,0.25,0.5,0.75,1))+
+  scale_x_continuous(limits=c(0,110), breaks=c(0,25,50,75,100))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#00A087FF"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#00A087FF"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+(psik+psik)/(psik+psik)
+
+
+(ratek+psik)/(ratek+psik)
+
+
+
+datmqk=subset(datmq, Species %in% k)
+maxCH2k=subset(maxCH2, Species %in% k)
+
+qgraphk=ggplot()+
+  geom_hline(yintercept=-14, lty=2, size=0.2)+
+  geom_hline(yintercept=0, size=0.1)+
+  #geom_errorbar(data=datmq,aes(ymin=q-q.error, ymax=q+q.error, x=Species, color=Species),
+  #              width=0, size=0.3)+
+  geom_point(data=datmqk,aes(x=Species,y=q, fill=Species, color=Species),size=2, shape=15)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species),fill="white", position=position_nudge(x=0.2), width=0.4, alpha=1, outlier.shape = NA)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species, fill=Species),position=position_nudge(x=0.2), width=0.4, alpha=0.15, outlier.shape = NA)+
+  geom_boxplot(data=maxCH2k,aes(x=Species, y=LTE, color=Species, fill=Species),position=position_nudge(x=-0), lwd=0.25,fatten=4,outlier.size=0.5, width=0.7, alpha=0.7)+
+  #geom_point(data=datm3, aes(x=Species, y=q, col=Species),stat="summary", fun="mean", size=1, position=position_nudge(x=0.2))+
+  ylab("Cold hardiness (°C)") + xlab("")+labs(color="")+
+  scale_y_continuous(limits=c(-35,5), breaks=c(-40,-30,-20,-10,0,5,20,30))+
+  scale_x_discrete(labels=c("AB","CC","FM","LK"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  theme_bw(base_size = 6)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+qgraphk
+
+
+avAllk=subset(avAll, Species %in% k)
+
+pathgraphk=ggplot()+
+  geom_segment(data=avAllk, aes(x=Species, y=0,xend=Species, yend=path, color=Species),arrow = arrow(length = unit(0.4, "lines"))) +
+  #geom_point(data=avAll, aes(x=Species, y=path, color=Species, fill=Species),size=1, shape=24)+
+  scale_y_continuous(limits=c(0,32), expand=c(0,0))+
+  ylab("Path length (°C)")+ xlab("")+
+  scale_x_discrete(labels=c("AB","CC","FM","LK"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  theme_bw(base_size = 6)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+pathgraphk
+
+qpathk=qgraphk+pathgraphk
+
+qpathk/qpathk
+
+
+
+letsck=subset(letsc, Species %in% k)
+letsek=subset(letse, Species %in% k)
+dat3k=subset(dat3, Species %in% k)
+fbb2k=subset(fbb2, Species %in% k)
+
+pred5=ggplot()+
+  geom_line(aes(x=Date,y=sumdeacc),data=letsck)+
+  geom_hline(aes(yintercept=q),size=0.2,lty=2, data=letsck)+
+  geom_point(aes(x=Date,y=LTE, fill=Species),shape=21,stroke=0.3, size=1,stat="summary",fun="mean", data=dat3k)+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2k,size=0.2)+
+  geom_errorbarh(data=letsek,aes(xmin=lowintervaldate, xmax=highintervaldate, y=10, color=Species),lwd=0.3, height=2)+
+  geom_hline(yintercept=0, size=0.2)+
+   scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  theme_bw(base_size=7) +
+  ylab("Cold hardiness (°C)") + xlab("")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +  
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=limsb) +
+  facet_wrap(~Species, ncol=2)
+
+
+pred5/pred5
+
+
+letsckab=subset(letsck, Species %in% "Abies_balsamea")
+letsekab=subset(letsek, Species %in% "Abies_balsamea")
+dat3kab=subset(dat3k, Species %in% "Abies_balsamea")
+fbb2kab=subset(fbb2k, Species %in% "Abies_balsamea")
+
+pred6=ggplot()+
+  geom_line(aes(x=Date,y=sumdeacc),data=letsckab)+
+  geom_hline(aes(yintercept=q),size=0.1,lty=2, data=letsckab)+
+  geom_point(aes(x=Date,y=LTE, fill=Species),shape=21,stroke=0.1, size=0.8,stat="summary",fun="mean", data=dat3kab)+
+  geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2kab,size=0.1)+
+  geom_errorbarh(data=letsekab,aes(xmin=lowintervaldate, xmax=highintervaldate, y=10, color=Species),lwd=0.2, height=2)+
+  geom_hline(yintercept=0, size=0.1)+
+   scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  theme_bw(base_size=5) +
+  ylab("Cold hardiness (°C)") + xlab("")+
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=5, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +  
+  scale_x_datetime(date_labels= "%b", date_breaks = "3 month", limits=limsb)
+
+
+fbbgraph2k+inset_element(pred6,0.02,0.6,0.45,1)
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+
+last=aggregate(LTE~Date+Species, dat3, mean)
+
+lasthigh=aggregate(LTE~Date+Species, dat3, max)
+lastlow=aggregate(LTE~Date+Species, dat3, min)
+
+
+colnames(last)=c("ColDate","Species","LTE")
+
+colnames(lasthigh)=c("ColDate","Species","LTEmax")
+colnames(lastlow)=c("ColDate","Species","LTEmin")
+
+last=merge(last,lasthigh)
+last=merge(last,lastlow)
+
+last=merge(last,setdate)
+
+last=merge(last,avAll[1:3])
+
+last=merge(last,slpcoef)
+
+
+last$predBB=-(last$LTE-last$q)/(last$Rate* (last$intcept+(1-last$intcept)/(1+exp(last$b*(log(last$portions)-log(last$c)  )))      )   )
+
+last$predBBlow=-(last$LTEmax-last$q)/(last$Rate*1.2* (last$intcept+(1-last$intcept)/(1+exp(last$b*(log(last$portions)-log(last$c)  )))      )   )
+last$predBBhigh=-(last$LTEmin-last$q)/(last$Rate*0.8* (last$intcept+(1-last$intcept)/(1+exp(last$b*(log(last$portions)-log(last$c)  )))      )   )
+
+last$predBBlow[last$predBBlow<0]=0
+last$predBBlow[last$predBBlow>200]=200
+last$predBBhigh[last$predBBhigh<0]=0
+last$predBBhigh[last$predBBhigh>200]=200
+
+ggplot()+
+  geom_line(data=last,aes(x=last$portions,y=last$predBB,col=Species))+
+  #geom_line(data=last,aes(x=last$portions,y=last$predBBlow,col=last$Species),lty=2)+
+  #geom_line(data=last,aes(x=last$portions,y=last$predBBhigh,col=last$Species),lty=2)+
+  geom_ribbon(data=last,aes(x=portions,ymax=predBBhigh,ymin=predBBlow, color=Species, fill=Species),alpha=0.2, size=0.2)+
+  
+  geom_point(data=fdat,aes(x=portions,y=BBtime, col=Species),size=0.5)+
+  scale_y_continuous(limits=c(0,200))+
+  facet_wrap(~Species, ncol=3)+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size=7) +
+  theme(legend.position = "bottom",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'))
+
+
+ggplot()+
+  geom_point(data=fdat,aes(x=portions,y=BBtime, col=Y))+
+  scale_y_continuous(limits = c(0,NA))+
+  facet_wrap(~Species)
+
+
+```
+
+
+```{r}
+
+#### Run only to obtain n's ####
+
+datn=NULL
+
+for (i in levels(dat2$Species)) {
+  
+    
+    dat2b=subset(dat2a, Species %in% i)
+    
+    for (j in levels(factor(dat2b$Collection))) {
+      
+      dat2n=subset(dat2b, Collection %in% j)
+      
+      if (mean(dat2n$Day)==0) {
+        
+        
+      } else {
+      
+      lmn=lm(dat2n$LTE~dat2n$Day)
+      rsq=summary(lmn)$r.squared
+      pval=summary(lmn)$coefficients[2,4]
+      n=nrow(dat2n)
+      
+      alp=summary(lmn)$coefficients[1,1]
+      alp.err=summary(lmn)$coefficients[1,2]
+      bet=summary(lmn)$coefficients[2,1]
+      bet.err=summary(lmn)$coefficients[2,2]
+      
+      datn=rbind(datn, c(i,j,n,alp,alp.err,bet,bet.err,rsq,pval))
+      
+      }
+      
+    }
+  
+    
+    
+}
+
+
+datn=data.frame(datn)
+
+colnames(datn)=c("Species","Collection","n","alpha","a.error","beta","b.error","rsq","pval")
+
+write.csv(datn,"collectionsn.csv")
+
+
+
+dattempn=NULL
+
+
+for (i in levels(dattemp2$Species)) {
+  
+    
+    dattemp2b=subset(dattemp2, Species %in% i)
+    
+    for (j in levels(factor(dattemp2b$Temperature))) {
+      
+      dattemp2n=subset(dattemp2b, Temperature %in% j)
+      
+      
+      
+      lmn=lm(dattemp2n$LTE~dattemp2n$Day)
+      rsq=summary(lmn)$r.squared
+      pval=summary(lmn)$coefficients[2,4]
+      n=nrow(dattemp2n)
+      
+      alp=summary(lmn)$coefficients[1,1]
+      alp.err=summary(lmn)$coefficients[1,2]
+      bet=summary(lmn)$coefficients[2,1]
+      bet.err=summary(lmn)$coefficients[2,2]
+      
+      dattempn=rbind(dattempn, c(i,j,n,alp,alp.err,bet,bet.err,rsq,pval))
+      
+      
+      
+    }
+  
+    
+    
+}
+
+
+dattempn=data.frame(dattempn)
+
+colnames(dattempn)=c("Species","Temperature","n","alpha","a.error","beta","b.error","rsq","pval")
+
+
+dattempn2=NULL
+
+
+for (i in levels(dattemp2x$Species)) {
+  
+    
+    dattemp2b=subset(dattemp2x, Species %in% i)
+    
+    for (j in levels(factor(dattemp2b$Temperature))) {
+      
+      dattemp2n=subset(dattemp2b, Temperature %in% j)
+      
+      
+      
+      lmn=lm(dattemp2n$LTE~dattemp2n$Day)
+      rsq=summary(lmn)$r.squared
+      pval=summary(lmn)$coefficients[2,4]
+      n=nrow(dattemp2n)
+      
+      alp=summary(lmn)$coefficients[1,1]
+      alp.err=summary(lmn)$coefficients[1,2]
+      bet=summary(lmn)$coefficients[2,1]
+      bet.err=summary(lmn)$coefficients[2,2]
+      
+      dattempn2=rbind(dattempn2, c(i,j,n,alp,alp.err,bet,bet.err,rsq,pval))
+      
+      
+      
+    }
+  
+    
+    
+}
+
+
+dattempn2=data.frame(dattempn2)
+
+colnames(dattempn2)=c("Species","Temperature","n","alpha","a.error","beta","b.error","rsq","pval")
+
+dattempn$Chill=82
+dattempn2$Chill=54
+
+dattempnn=rbind(dattempn,dattempn2)
+
+write.csv(dattempnn,"temperaturesn.csv")
+
+table(dattempnn$Species)
+
+
+slpn=NULL
+
+for (i in levels(slpd$Species)) {
+  
+  slpdn=subset(slpd, Species %in% i)
+  
+  modn=drm(slpdn$R.slope2~slpdn$portions, fct = LL.3u(), type = "continuous")
+  b=summary(modn)$coefficients[1,1]
+  b.err=summary(modn)$coefficients[1,2]
+  b.p=summary(modn)$coefficients[1,4]
+  
+  d=summary(modn)$coefficients[2,1]
+  d.err=summary(modn)$coefficients[2,2]
+  d.p=summary(modn)$coefficients[2,4]
+  
+  c=summary(modn)$coefficients[3,1]
+  c.err=summary(modn)$coefficients[3,2]
+  c.p=summary(modn)$coefficients[3,4]
+  
+  
+  
+  n=nrow(slpdn)
+  
+  slpn=rbind(slpn, c(i,n,b,b.err,b.p,d,d.err,d.p,c,c.err,c.p))
+  
+}
+
+
+slpn=data.frame(slpn)
+
+colnames(slpn)=c("Species","n","b","b.err","b.p","d","d.err","d.p","c","c.err","c.p")
+
+write.csv(slpn,"psideaccn.csv")
+
+
+
+
+
+
+
+
+
+dattempn=NULL
+
+for (i in levels(dattemp3i$Species)) {
+  
+  dattemp3b=subset(dattemp3i, Species %in% i)
+  
+  dattemp3b$Temp2=dattemp3b$Temperature^2
+  dattemp3b$Temp3=dattemp3b$Temperature^3
+  
+  dattemp3b$Rateb=dattemp3b$Rate/mean(Tdat$correction[Tdat$Species==i])
+  
+  
+  lm7=lm(Rateb~0+Temperature+Temp2+Temp3, data=dattemp3b)
+  
+  rsq=summary(lm7)$adj.r.squared
+  pval=summary(lm7)$coefficients[2,4]
+  n=nrow(dattemp3b)
+  
+  pval=1-pf(summary(lm7)$fstatistic[1], summary(lm7)$fstatistic[2],summary(lm7)$fstatistic[3])
+
+  
+  
+  dattempn=rbind(dattempn,c(i,summary(lm7)$coefficients[,1], summary(lm7)$coefficients[,2], pval))
+  
+  
+  
+  
+}
+
+dattempn=data.frame(dattempn)
+
+
+
+colnames(dattempn)=c("Species","T1","T2","T3","T1.er","T2.er","T3.er","pval")
+
+write.csv(dattempn,"temprespn.csv")
+
+
+```
+
+
+```{r}
+
+#### New figures post review ####
+
+
+datwd=datw
+
+datwd$day=day(datwd$Date)
+datwd$month=month(datwd$Date)
+datwd$year=year(datwd$Date)
+
+datwd$Date2=as.Date(paste(datwd$year,datwd$month,datwd$day,sep="-"))
+
+datwdchill=aggregate(portions~Date2,datwd,mean)
+datwdchill$Date2=as.POSIXct(datwdchill$Date2)+61200
+
+
+
+datwdchill=merge(datwdchill,k)
+colnames(datwdchill)=c("Date2","portions","Species")
+datwdchill$Species=as.factor(datwdchill$Species)
+
+
+
+datwdmin=aggregate(Temperature~Date2,datwd,min)
+datwdmax=aggregate(Temperature~Date2,datwd,max)
+
+datwdmin$Date2=as.POSIXct(datwdmin$Date2)+61200
+
+datwdmax$Date2=as.POSIXct(datwdmax$Date2)+61200
+
+datwdmax=merge(datwdmax,k)
+colnames(datwdmax)=c("Date2","Max","Species")
+
+datwdmin=merge(datwdmin,k)
+colnames(datwdmin)=c("Date2","Min","Species")
+
+datwdmax$Species=as.factor(datwdmax$Species)
+datwdmin$Species=as.factor(datwdmin$Species)
+
+datwdboth=merge(datwdmax,datwdmin)
+
+
+ggplot()+
+  #geom_hline(yintercept=33+60.42/4, lty=2, size=0.1)+
+  #geom_hline(yintercept=33+37.39/4, lty=2, size=0.1)+
+  #geom_hline(yintercept=33+66.6/4, lty=2, size=0.1)+
+  geom_hline(yintercept=33+15/4, lty=2, size=0.1)+
+  geom_line(data=datwdchill,aes(x=Date2, y=33+(portions/4), group=Species), size=0.3)+
+  #geom_line(data=datw,aes(x=Date, y=Temperature), size=0.2)+
+  geom_ribbon(data=datwdboth, aes(x=Date2, ymin=Min , ymax=Max, group=Species),lty=1, color="darkgrey", lwd=0.1, alpha=0.3)+
+  geom_smooth(data=dat3k, aes(x=Date, y=LTE, color=Species, fill=Species),method='loess',alpha=0.3,formula=y~x, span=0.08, size=0)+ #### for now, use dat4 for only 4 genotypes
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date),lwd=0.1,fatten=4, outlier.shape=NA, alpha=1, width=386400)+
+  geom_boxplot(data=dat3k, aes(x=Date, y=LTE, group=Date, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+
+  
+  geom_polygon(aes(x=Date,y=33+25*pdf, color=Species),alpha=1, fill="white", data=fbb2k,size=0.1)+
+  geom_polygon(aes(x=Date,y=33+25*pdf, color=Species, fill=Species),alpha=0.7, data=fbb2k,size=0.1)+
+  geom_boxplot(data=fdatbk,aes(x=ColDate,y=33+(BBtime)/4, group=ColDate),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=NA, outlier.stroke = 0.3, alpha=1, width=386400)+
+  geom_boxplot(data=fdatbk,aes(x=ColDate,y=33+(BBtime)/4, group=ColDate, fill=Species),lwd=0.1,fatten=4,outlier.size=0.5, outlier.shape=21, outlier.stroke = 0.3, alpha=0.8, width=386400)+
+  scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  geom_hline(yintercept=0, lty=3, size=0.2)+
+  geom_hline(yintercept = 33,lty=1,size=0.2,color="black")+
+  ylab("Cold hardiness (°C)") + xlab("") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0,10,20,30), limits= c(-33,NA), sec.axis = sec_axis(~ .*4-132, breaks=c(0,30,60,90,120,150), name="Time to budbreak (d)")) +
+  scale_x_datetime(date_labels= "%b", date_breaks = "2 month", limits=lims) +
+  facet_wrap(~Species, ncol=4)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cn=ggplot(data=slp2)+
+  ylab("Rate proportion") + xlab("Chill portions") + labs(color = "") +
+  geom_line(aes(x=portions, y= pred, group=Species,color=Species ), size=0.4)+
+  geom_line(aes(x=portions,y=pred2), size=0.4, lty=5)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_color_viridis_d(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_y_continuous(limits=c(0,1),expand=c(0,0))+
+  scale_x_continuous(limits=c(0,128), expand = c(0,0), breaks=c(0,25,50,75,100,125))+
+  theme_bw(base_size = 6)+
+  theme(legend.direction = 'vertical', 
+        legend.position = "none",
+        legend.key.size = unit(0.5, 'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+cn
+
+
+
+dn=ggplot()+
+  #geom_hline(yintercept=59.378,lty=2)+
+  geom_errorbar(data=fdatbmean4,aes(ymin=portions-ReqBB.error, ymax=portions+ReqBB.error, x=Species, color=Species),lwd=0.2, width=0)+
+  geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=21, size=1.5, position=position_nudge(x=-0))+
+  geom_point(data=slpcoef,aes(x=Species, y=c+200, color=Species, fill=Species), shape=22)+ # This is here to keep color scheme
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("      AB","AR","      AS","CC","      CF","CM","      FG","FM","      KL","LK","      MG","PA","      PR",
+                            "PN","      RC"))+
+  scale_y_continuous(limits=c(30,105))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=6) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length.y = unit(0.2, 'lines'),
+        axis.ticks.length.x = unit(2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0))
+
+
+dn
+
+d2n=ggplot()+
+  geom_hline(yintercept=66.01,lty=2,size=0.2)+
+  geom_errorbar(data=slpcoef,aes(ymin=c-c.error, ymax=c+c.error, x=Species, color=Species),lwd=0.2, width=0)+
+  #geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=21, position=position_nudge(x=-0))+
+  geom_point(data=slpcoef,aes(x=Species, y=c, color=Species, fill=Species), shape=15, size=1.5)+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("      AB","AR","      AS","CC","      CF","CM","      FG","FM","      KL","LK","      MG","PA","      PR",
+                            "PN","      RC"))+
+  scale_y_continuous(limits=c(30,105))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=6) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length.y = unit(0.2, 'lines'),
+        axis.ticks.length.x = unit(2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0))
+
+d2n
+
+
+#(c+d)/(c+d)
+
+cnn=cn+d2n+dn+plot_layout(widths=c(1.2,0.7,0.7))
+
+cnn/cn
+
+
+
+legendfig=ggplot()+
+  #geom_hline(yintercept=59.378,lty=2)+
+  geom_point(data=fdatbmean4, aes(x=Species,y=portions, color=Species, fill=Species),shape=19, size=1.5, position=position_nudge(x=-0))+
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  ylab("Chill requirement (portions)")+xlab("")+labs(color = "",shape="Method") +
+  scale_x_discrete(labels=c("      AB","AR","      AS","CC","      CF","CM","      FG","FM","      KL","LK","      MG","PA","      PR",
+                            "PN","      RC"))+
+  scale_y_continuous(limits=c(30,105))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=6) +
+  theme(legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.box.spacing = unit(0.4, 'lines'),
+        legend.spacing = unit(0.4,'lines'),
+        legend.key.size=unit(0.4,'lines'),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length.y = unit(0.2, 'lines'),
+        axis.ticks.length.x = unit(2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0))
+
+
+legendfig
+
+
+
+
+
+
+qgraphn=ggplot()+
+  geom_hline(yintercept=-14, lty=2, size=0.2)+
+  geom_hline(yintercept=0, size=0.1)+
+  #geom_errorbar(data=datmq,aes(ymin=q-q.error, ymax=q+q.error, x=Species, color=Species),
+  #              width=0, size=0.3)+
+  geom_point(data=datmq,aes(x=Species,y=q, fill=Species, color=Species),size=1.5, shape=15)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species),fill="white", position=position_nudge(x=0.2), width=0.4, alpha=1, outlier.shape = NA)+
+  #geom_boxplot(data=datm3, aes(x=Species, y=q, color=Species, fill=Species),position=position_nudge(x=0.2), width=0.4, alpha=0.15, outlier.shape = NA)+
+  geom_boxplot(data=maxCH2,aes(x=Species, y=LTE, color=Species, fill=Species),position=position_nudge(x=-0), lwd=0.25,fatten=4,outlier.size=0.5, width=0.7, alpha=0.7)+
+  #geom_point(data=datm3, aes(x=Species, y=q, col=Species),stat="summary", fun="mean", size=1, position=position_nudge(x=0.2))+
+  ylab("Cold hardiness (°C)") + xlab("")+labs(color="")+
+  scale_y_continuous(limits=c(-40,5), breaks=c(-40,-30,-20,-10,0,5,20,30))+
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 6)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+
+pathgraphn=ggplot()+
+  geom_segment(data=avAll, aes(x=Species, y=0,xend=Species, yend=path, color=Species),arrow = arrow(length = unit(0.3, "lines"))) +
+  #geom_point(data=avAll, aes(x=Species, y=path, color=Species, fill=Species),size=1, shape=24)+
+  scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Path length (°C)")+ xlab("")+
+  scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 6)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=6, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=90,vjust=0.5, hjust=0.5))
+
+
+
+(qgraphn+pathgraphn)/qgraph
+
+
+
+
+
+
+datwwn=datww
+
+datwwn$Temp7=0
+
+
+for (i in 169:nrow(datwwn)) {
+  
+  datwwn$Temp7[i]=sum(datwwn$Temperature[(i-168):i])/168
+  
+  
+}
+
+plot(datwwn$Date,datwwn$Temp7)
+
+
+baseT=0
+
+datwwn$T2=(datwwn$Temperature-baseT)*abs(datwwn$Temperature-baseT)
+
+datwwn$T3=0
+
+####Define number of days prior to date of collection to use#####
+t=7*24
+
+for (i in c(t:nrow(datwwn))) {
+  
+  datwwn$T3[i]=sum(datwwn$T2[(i-t):i])
+  
+}
+
+
+datwwn$SigmaT=sign(datwwn$T3)*sqrt(abs(datwwn$T3))
+
+plot(datwwn$Date,datwwn$SigmaT)
+
+
+
+dat3n=rbind(dat3, dat3x)
+
+dat3n=aggregate(LTE~Species+Date+Collection+Y,dat3n,mean)
+
+
+dat3n=merge(dat3n, datwwn)
+
+
+plot(dat3n$SigmaT,dat3n$LTE)
+
+dat3nn=dat3n
+dat3nn$alp=0.3
+dat3nn$alp[dat3nn$portions>60]=0.9
+
+dat3nlow=subset(dat3n, portions<60)
+dat3nhigh=subset(dat3n,portions>60)
+
+ggplot()+
+  geom_smooth(aes(x=SigmaT, y=LTE, group=Species), fullrange=T, color="black",size=0.8, method='lm', formula=y~poly(x,2), se=F,data=dat3nlow)+
+  geom_smooth(aes(x=SigmaT, y=LTE, group=Species), fullrange=T, lty=2, color="black",size=0.8, method='lm', formula=y~poly(x,2), se=F,data=dat3nhigh)+
+  geom_point(data=dat3n, aes(x=SigmaT, y=LTE, col=Species, fill=Species, shape=Y, alpha=portions/144),size=2,stroke=0.5)+
+  scale_shape_manual(values=c(21,24,15,16,17, 18)) +
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "bottom",
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2,size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab("SigmaT") +
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(-33,15)) +
+  scale_x_continuous() +
+  facet_wrap(~Species, ncol=3)
+
+
+ggplot()+
+  geom_smooth(aes(x=Temp7, y=LTE, group=Species), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,2), se=F,data=dat3nlow)+
+  geom_smooth(aes(x=Temp7, y=LTE, group=Species), fullrange=T, lty=2, color="black",size=0.3, method='lm', formula=y~poly(x,2), se=F,data=dat3nhigh)+
+  geom_point(data=dat3nn, aes(x=Temp7, y=LTE, fill=Species, shape=Y, alpha=alp),col="black",size=1.2,stroke=0.2)+
+  scale_alpha(range=c(0.4,0.9), name="Chill", breaks=c(0.4,0.9), labels=c("<60 portions",">60 portions"))+
+  scale_shape_manual(values=c(21,24,15,16,17, 18), name="Season", labels=c("2019-2020","2020-2021")) +
+  
+  #scale_color_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  #scale_fill_manual(values=c("#E64B35FF","#4DBBD5FF","#00A087FF","#3C5488FF"))+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        legend.key.size = unit(0.5,'lines'),
+        strip.background = element_rect(color="#CCCCCC"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))+
+  #geom_polygon(aes(x=Date,y=25*pdf, color=Species, fill=Species),alpha=0.5, data=fbb2,size=0.2)+
+  ylab("Cold hardiness (°C)") + xlab(expression(paste('T'[mean[" 7"]]," (°C)"))) +
+  
+  
+  scale_y_continuous(breaks = c(-30,-20,-10,0), limits= c(NA,0)) +
+  scale_x_continuous() +
+  facet_wrap(~Species, ncol=3)
+
+
+for (i in levels(dat3nhigh$Species)) {
+  
+  dat3nsub=subset(dat3nhigh, Species %in% i)
+  
+  print(i)
+  print(summary(lm(LTE~poly(Temp7,2), data=dat3nsub)))
+  
+  
+  
+}
+
+for (i in levels(dat3nlow$Species)) {
+  
+  dat3nsub=subset(dat3nlow, Species %in% i)
+  
+  print(i)
+  print(summary(lm(LTE~poly(Temp7,2), data=dat3nsub)))
+  
+  
+  
+}
+
+
+datwwn[(8:nrow(datwwn)),]
+
+
+ggplot()+
+  geom_line(data=datw,aes(x=Date, y=Temperature, color=Temperature), size=0.2)+
+  geom_line(data=datwx,aes(x=Date, y=Temperature, color=Temperature), size=0.2)+
+  geom_line(data=datwwn[(169:nrow(datwwn)),],aes(x=Date,y=Temp7),lty=1, color="black",size=0.4)+
+  geom_line(data=datw,aes(x=Date, y=(portions/3)-20), size=0.3, lty=3)+
+  geom_line(data=datwx,aes(x=Date, y=(portions/3)-20), size=0.3, lty=3)+
+  geom_hline(yintercept=0,size=0.1)+
+  #geom_hline(yintercept=-14,size=0.2,lty=2)+
+  scale_y_continuous(limits=c(-20,32),breaks=c(-20,-10,0,10,20,30),expand = c(0,0,0.02,0.02),
+                     sec.axis = sec_axis(~ .*3+(20*3), breaks=c(0,30,60,90,120,150), name="Accumulated chill (portions)"))+
+  ylab("Temperature (°C)") + xlab("") + labs(color = "") +
+  scale_x_datetime(date_labels= "%b", date_breaks = "1 month") +
+  scale_colour_gradientn(colors=c("#333366","#333366","#006699","#009999","#99CC33","#FFCC00","#FF6600","#CC0033") ) +
+  theme_bw(base_size=7) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
+
+
+
+
+
+#### Correlation plots ####
+
+avAlln=merge(avAll,fdatbmean4)
+
+
+cor1=ggplot()+
+  geom_smooth(data=avAlln,aes(x=Rate, y=portions), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=Rate, y=portions, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Chilling requirement based on budbreak")+ xlab("Deacclimation rate (°C)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+
+cor2=ggplot()+
+  geom_smooth(data=avAlln,aes(x=Time, y=FieldBB), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=Time, y=FieldBB, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Observed budbreak (day of year)")+ xlab("Time to BB (Eq 1)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+cor3=ggplot()+
+  geom_smooth(data=avAlln,aes(x=Rate, y=FieldBB), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=Rate, y=FieldBB, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Observed budbreak (day of year)")+ xlab("Deacclimation rate (°C)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+
+cor4=ggplot()+
+  geom_smooth(data=avAlln,aes(x=path, y=FieldBB), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=path, y=FieldBB, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Observed budbreak (day of year)")+ xlab("Path length (°C)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+cor5=ggplot()+
+  geom_smooth(data=avAlln,aes(x=q, y=FieldBB), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=q, y=FieldBB, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Observed budbreak (day of year)")+ xlab("CHBB (°C)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+cor6=ggplot()+
+  geom_smooth(data=avAlln,aes(x=LTE, y=FieldBB), fullrange=T, color="black",size=0.3, method='lm', formula=y~poly(x,1), se=F)+
+  geom_point(data=avAlln,aes(x=LTE, y=FieldBB, color=Species, fill=Species),size=2, shape=21)+
+  #scale_y_continuous(limits=c(0,37), expand=c(0,0))+
+  ylab("Observed budbreak (day of year)")+ xlab("CHmax (°C)")+
+  #scale_x_discrete(labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  #scale_color_viridis_d()+
+  #scale_fill_viridis_d()+
+  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
+                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
+                             "#91D1C2FF","#00A087FF","#DC0000FF",
+                             "#3C5488FF","#CAB2D6","#6A3D9A",
+                             "#FDBF6F","#FF7F00","#FFD300"),
+                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
+  theme_bw(base_size = 7)+
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(size=0.1,color="black"),
+        axis.line.y = element_line(size=0.1,color="black"),
+        axis.text = element_text(size=7, color="black"),
+        axis.ticks = element_line(size=0.1,color="black"),
+        axis.ticks.length = unit(0.2, 'lines'),
+        axis.text.x = element_text(vjust=0.5, hjust=0.5))
+
+
+
+(cor1+cor6+cor5)/(cor4+cor3+cor2)
+
+cor(avAlln$portions,avAlln$Rate)
+
+cor(avAlln$FieldBB,avAlln$Rate)
+cor(avAlln$FieldBB,avAlln$LTE)
+cor(avAlln$FieldBB,avAlln$q)
+cor(avAlln$FieldBB,avAlln$path)
+cor(avAlln$FieldBB,avAlln$Time)
+
+summary(lm(avAlln$portions~avAlln$Rate))
+
+summary(lm(avAlln$FieldBB~avAlln$LTE))
+summary(lm(avAlln$FieldBB~avAlln$q))
+summary(lm(avAlln$FieldBB~avAlln$path))
+summary(lm(avAlln$FieldBB~avAlln$Rate))
+summary(lm(avAlln$FieldBB~avAlln$Time))
+
+
+
+#### I'm here ####
+
+```
+
+
