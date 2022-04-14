@@ -1225,45 +1225,6 @@ summary(lm(dat3b$LTE~dat3b$sumdeacc))
 
 summary(lm(dat3bb$LTE~dat3bb$sumdeacc))
 
-
-ggplot()+
-  geom_point(aes(x=LTE, y=sumdeacc, col=Species),shape=21,size=1.5,stroke=0.5,data=dat3b)+
-  geom_point(aes(x=LTE, y=sumdeacc, col=Species),size=1.5,stroke=0.3,data=dat3bb)+
-  geom_smooth(aes(x=LTE, y=sumdeacc), fullrange=T, color="black",size=0.8, method='lm', formula=y~x, se=F,data=dat3bb )+
-  ylab("Predicted cold hardiness (°C)") + xlab("Observed cold hardiness (°C)") + labs(color = "Species") +
-  scale_x_continuous(limits=c(-33,0))+
-  scale_y_continuous(limits=c(-33,0))+
-  geom_abline(slope=1,intercept=0, lty=1, size=0.2)+
-  geom_abline(slope=1,intercept=-5, lty=2, size=0.2)+
-  geom_abline(slope=1,intercept=5, lty=2, size=0.2)+
-  #scale_color_viridis_d()+
-  #scale_fill_viridis_d()+
-  scale_color_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
-                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
-                             "#91D1C2FF","#00A087FF","#DC0000FF",
-                             "#3C5488FF","#CAB2D6","#6A3D9A",
-                             "#FDBF6F","#FF7F00","#FFD300"),
-                     labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
-  scale_fill_manual(values=c("#E64B35FF","#F39B7FFF","#8491B4FF",
-                             "#4DBBD5FF","#7E6148FF","#B09C85FF",
-                             "#91D1C2FF","#00A087FF","#DC0000FF",
-                             "#3C5488FF","#CAB2D6","#6A3D9A",
-                             "#FDBF6F","#FF7F00","#FFD300"),
-                    labels=c("AB","AR","AS","CC","CF","CM","FG","FM","KL","LK","MG","PA","PR","PN","RC"))+
-  theme_bw(base_size=7) +
-  theme(legend.position = "none",
-        strip.background = element_rect(color="#CCCCCC"),
-        panel.grid = element_blank(),
-        panel.border = element_blank(),
-        axis.line.x = element_line(size=0.1,color="black"),
-        axis.line.y = element_line(size=0.1,color="black"),
-        axis.text = element_text(size=7, color="black"),
-        axis.ticks = element_line(size=0.1,color="black"),
-        axis.ticks.length = unit(0.2, 'lines'),
-        axis.text.x = element_text(angle=0,vjust=0, hjust=0.5))
-
-
-
 ```
 
 
