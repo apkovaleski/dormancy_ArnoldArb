@@ -9,7 +9,7 @@ Data and code for analysis of cold hardiness effects on budbreak for 15 differen
 
 ### Dormancy_ArnoldArb_2y.Rmd
 
-R Markdown file used for data analysis. First code chunk (line 12-1228) are data analysis. Following code chunks generate figures from the manuscript.
+R Markdown file used for data analysis. First code chunk (line 12-1228) is data analyses. Following code chunks generate figures from the manuscript.
 
 
 ### ChillCurve.csv and ChillCurve2.csv
